@@ -68,7 +68,12 @@ void XMLReader::LoadData_SoundProducers(pugi::xml_node& root, std::vector <Sound
 		data.z = atof(valString.c_str());
 		
 		valString = sp_node.child("AccountNumber").attribute("num").value();
-		data.account_number = atoi(valString.c_str());
+		int parsed_account = atoi(valString.c_str());
+		//account_number is a std::uint8_t index into the 10-entry sound-account
+		//array loaded later (m_sound_accounts / account_look_up); clamp so a
+		//crafted <AccountNumber num="200"/> can never index out of bounds
+		data.account_number = static_cast<std::uint8_t>(parsed_account < 0 ? 0 :
+			(parsed_account > 9 ? 9 : parsed_account));
 		
 		valString = sp_node.child("FreeRoam").attribute("status").value();
 		if(valString == "true"){ data.freeRoam = true;}

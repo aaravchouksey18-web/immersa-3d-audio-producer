@@ -154,6 +154,9 @@ void Timeline::AddPlotPositionToTimeline(std::string name)
 	m_save_data.number_of_plots += 1;
 	
 	m_save_data.plots_save_data.emplace_back(TimelinePlotPositionSaveData({0, name, ""}) );
+	//the plot list may have been emptied (remove-all) with the selected
+	//index stuck at -1; selecting the fresh plot keeps the frames GUI usable
+	if(edit_timeline_listview_activeIndex < 0){edit_timeline_listview_activeIndex = 0;}
 }
 
 void Timeline::RemovePlotPositionFromTimeline(size_t& index)
@@ -292,10 +295,11 @@ void Timeline::DrawGui_Item()
 		
 		DrawTimelinePlotEditorGUI();
 		
-		//an empty plot list has no "current" plot to edit: the frames and
-		//points GUI all index into it, so skip them (the editor above still
-		//offers "Add Timeline" to create the first plot)
-		if(timeline_plots_position.empty()){return;}
+		//the frames + points GUI all index into the *selected* plot; skip
+		//them when there is none selected (empty list -> index -1, and
+		//remove-all-then-add leaves a valid list with index still -1). The
+		//editor above still offers "Add Timeline" to create the first plot.
+		if(timeline_plots_position.empty() || edit_timeline_listview_activeIndex < 0){return;}
 		
 		DrawFramesGUI();
 		
@@ -313,10 +317,23 @@ void Timeline::DrawTimelinePlotEditorGUI()
 {
 	
 	static int obj_item_current_idx = 0; // Here we store our selection data as an index.
-	const char* obj_combo_preview_value = obj_choices_vec[obj_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+	
+	//obj_choices_vec is rebuilt on every project load/resize (InitGUI
+	//resizes it to producer-count + 2): clamp the stale static selection
+	//and skip the combo if the vector is empty, so a shrink can never read
+	//out of bounds
+	int obj_preview_idx = -1;
+	if(!obj_choices_vec.empty())
+	{
+		obj_preview_idx = (obj_item_current_idx < static_cast<int>(obj_choices_vec.size()))
+			? obj_item_current_idx : static_cast<int>(obj_choices_vec.size() - 1);
+	}
+	const char* obj_combo_preview_value = (obj_preview_idx < 0)
+		? "" : obj_choices_vec[obj_preview_idx].c_str();
 	static ImGuiComboFlags obj_flags = 0;
-				
-	if (ImGui::BeginCombo("Object", obj_combo_preview_value, obj_flags))
+	
+	if (obj_preview_idx >= 0 &&
+		ImGui::BeginCombo("Object", obj_combo_preview_value, obj_flags))
 	{
 		for (int n = 0; n < obj_choices_vec.size(); n++)
 		{
@@ -558,7 +575,8 @@ void Timeline::DrawTimelinePoints_ImGUI_version()
 				
 			}
 			//else if sound producer
-			else if(edit_index >= 2)
+			else if(edit_index >= 2 &&
+					edit_index - 2 < static_cast<int>(sound_producer_vector_ref->size()))
 			{
 				//get position of sound	producer
 				
