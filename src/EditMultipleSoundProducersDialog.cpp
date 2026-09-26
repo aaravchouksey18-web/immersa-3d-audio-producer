@@ -44,9 +44,19 @@ void EditMultipleSoundProducersDialog::DrawDialog()
 	{
 		//render sound producer dropdown 
 		static int sp_item_current_idx = 0; // Here we store our selection data as an index.
-		const char* sp_combo_preview_value = soundproducer_items[sp_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+		// the items vector is rebuilt from the LIVE producer count on every
+		// InitGUI(), so a stale sp_item_current_idx (producers deleted since
+		// it was last set) can exceed it. Clamp the preview index and skip
+		// the combo entirely when there are no producers to list.
+		const int sp_items_count = (int)soundproducer_items.size();
+		const int sp_preview_idx = (sp_items_count > 0)
+			? ((sp_item_current_idx >= sp_items_count)
+			   ? sp_items_count - 1 : sp_item_current_idx)
+			: 0;
+		const char* sp_combo_preview_value = (sp_items_count > 0)
+			? soundproducer_items[sp_preview_idx].c_str() : "";
 					
-		if (ImGui::BeginCombo("Sound Producer", sp_combo_preview_value, (ImGuiComboFlags)0))
+		if (sp_items_count > 0 && ImGui::BeginCombo("Sound Producer", sp_combo_preview_value, (ImGuiComboFlags)0))
 		{
 			for (int n = 0; n < soundproducer_items.size(); n++)
 			{
@@ -95,10 +105,19 @@ void EditMultipleSoundProducersDialog::DrawDialog()
 		if(m_sound_bank_ptr)
 		{
 			static int item_current_idx = 0; // Here we store our selection data as an index.
-			const char* combo_preview_value = sound_items[item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+			// sound_items is rebuilt from the account lookup table on every
+			// InitGUI(); clamp a stale static selection and skip the combo
+			// when the table is empty (F2 pattern, keeps this in-bounds)
+			const int sound_items_count = (int)sound_items.size();
+			const int sound_preview_idx = (sound_items_count > 0)
+				? ((item_current_idx >= sound_items_count)
+				   ? sound_items_count - 1 : item_current_idx)
+				: 0;
+			const char* combo_preview_value = (sound_items_count > 0)
+				? sound_items[sound_preview_idx].c_str() : "";
 			static ImGuiComboFlags flags = 0;
 						
-			if (ImGui::BeginCombo("Sound Account", combo_preview_value, flags))
+			if (sound_items_count > 0 && ImGui::BeginCombo("Sound Account", combo_preview_value, flags))
 			{
 				for (int n = 0; n < sound_items.size(); n++)
 				{
@@ -148,7 +167,12 @@ void EditMultipleSoundProducersDialog::ChangeSoundProducerAttributes()
 	{
 		if(sound_producer_vector_ref->size() > 0)
 		{
-			SoundProducer* thisSoundProducer = sound_producer_vector_ref->at(current_sound_producer_editing_index).get();
+			// clamp a stale editing index (producers removed since this was set)
+			// instead of letting at() throw out_of_range
+			size_t sp_edit_idx = current_sound_producer_editing_index;
+			size_t sp_edit_count = sound_producer_vector_ref->size();
+			if (sp_edit_idx >= sp_edit_count) { sp_edit_idx = sp_edit_count - 1; }
+			SoundProducer* thisSoundProducer = sound_producer_vector_ref->at(sp_edit_idx).get();
 			
 			std::string newname = std::string(editsp_char_name);
 			thisSoundProducer->SetNameString(newname);
@@ -200,7 +224,13 @@ void EditMultipleSoundProducersDialog::SoundProducerSelectedInListBox(size_t cho
 	{
 		if(sound_producer_vector_ref->size() > 0)
 		{
-			SoundProducer* thisSoundProducer = sound_producer_vector_ref->at(choice).get();
+			// clamp a stale choice (producers removed since the dialog was
+			// configured) instead of letting at() throw out_of_range
+			size_t sp_idx = choice;
+			size_t sp_count = sound_producer_vector_ref->size();
+			if (sp_idx >= sp_count) { sp_idx = sp_count - 1; }
+			current_sound_producer_editing_index = sp_idx;
+			SoundProducer* thisSoundProducer = sound_producer_vector_ref->at(sp_idx).get();
 		
 			tempFreeRoamBool = thisSoundProducer->GetFreeRoamBool();
 			
@@ -247,7 +277,10 @@ void EditMultipleSoundProducersDialog::InitGUI()
 	
 	if(sound_producer_vector_ref)
 	{
-		if(soundproducer_items.empty())
+		// rebuild from the LIVE producer count on every InitGUI (no empty()
+		// guard): the list must track producers added or removed between
+		// dialog sessions, otherwise the combo goes stale — stale names, and
+		// indices pointing at the wrong producer entirely
 		{
 			int edit_soundproducer_listview_itemsCount = (int)sound_producer_vector_ref->size();
 			soundproducer_items.resize(edit_soundproducer_listview_itemsCount);
@@ -258,9 +291,6 @@ void EditMultipleSoundProducersDialog::InitGUI()
 				soundproducer_items[i] = sound_producer_vector_ref->at(i)->GetNameString() + 
 															" ( " + std::to_string(i) + " )";
 			}
-			
-			
-
 		}
 				
 	}

@@ -115,9 +115,19 @@ void EditMultipleEAXReverbZonesDialog::DrawDialog()
 
 		//render standard reverb zone dropdown 
 		static int ez_item_current_idx = 0; // Here we store our selection data as an index.
-		const char* ez_combo_preview_value = eax_reverb_zone_items[ez_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+		// the items vector is rebuilt from the LIVE zone count on every
+		// InitGUI(), so a stale ez_item_current_idx (zones deleted since it
+		// was last set) can exceed it. Clamp the preview index and skip the
+		// combo entirely when there are no zones to list.
+		const int ez_items_count = (int)eax_reverb_zone_items.size();
+		const int ez_preview_idx = (ez_items_count > 0)
+			? ((ez_item_current_idx >= ez_items_count)
+			   ? ez_items_count - 1 : ez_item_current_idx)
+			: 0;
+		const char* ez_combo_preview_value = (ez_items_count > 0)
+			? eax_reverb_zone_items[ez_preview_idx].c_str() : "";
 					
-		if (ImGui::BeginCombo("EAX Reverb Zones", ez_combo_preview_value, (ImGuiComboFlags)0))
+		if (ez_items_count > 0 && ImGui::BeginCombo("EAX Reverb Zones", ez_combo_preview_value, (ImGuiComboFlags)0))
 		{
 			for (int n = 0; n < eax_reverb_zone_items.size(); n++)
 			{
@@ -276,7 +286,12 @@ void EditMultipleEAXReverbZonesDialog::ChangeEAXReverbZoneAttributes()
 		if(m_effects_manager_ptr->eax_reverb_zones_vector.size() > 0)
 		{
 			
-			ReverbZone* thisReverbZone = &m_effects_manager_ptr->eax_reverb_zones_vector.at(m_selection_index);
+			// clamp: m_selection_index can be stale (zones deleted since the
+			// dialog was configured) and at() would throw out_of_range
+			size_t ez_edit_idx = m_selection_index;
+			size_t ez_count = m_effects_manager_ptr->eax_reverb_zones_vector.size();
+			if (ez_edit_idx >= ez_count) { ez_edit_idx = ez_count - 1; }
+			ReverbZone* thisReverbZone = &m_effects_manager_ptr->eax_reverb_zones_vector.at(ez_edit_idx);
 			
 			std::string name = std::string(er_char_name);
 			thisReverbZone->SetNameString(name);	
@@ -407,7 +422,11 @@ void EditMultipleEAXReverbZonesDialog::ReverbZoneSelectedInListBox(size_t choice
 	
 	if(m_effects_manager_ptr->eax_reverb_zones_vector.size() > 0)
 	{
-		ReverbZone* thisReverbZone = &m_effects_manager_ptr->eax_reverb_zones_vector.at(choice);
+		// clamp: a stale choice (from a deleted zone) must not throw at()
+		size_t ez_idx = choice;
+		size_t ez_count = m_effects_manager_ptr->eax_reverb_zones_vector.size();
+		if (ez_idx >= ez_count) { ez_idx = ez_count - 1; }
+		ReverbZone* thisReverbZone = &m_effects_manager_ptr->eax_reverb_zones_vector.at(ez_idx);
 		
 		tempEAXReverbProp = thisReverbZone->GetEAXReverbZoneProperties();
 		

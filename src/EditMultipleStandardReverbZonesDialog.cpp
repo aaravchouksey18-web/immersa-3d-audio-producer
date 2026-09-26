@@ -93,9 +93,19 @@ void EditMultipleStandardReverbZonesDialog::DrawDialog()
 
 			//render standard reverb zone dropdown 
 			static int sz_item_current_idx = 0; // Here we store our selection data as an index.
-			const char* sz_combo_preview_value = standard_reverb_zone_items[sz_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+			// the items vector is rebuilt from the LIVE zone count on every
+			// InitGUI(), so a stale sz_item_current_idx (zones deleted since
+			// it was last set) can exceed it. Clamp the preview index and
+			// skip the combo entirely when there are no zones to list.
+			const int sz_items_count = (int)standard_reverb_zone_items.size();
+			const int sz_preview_idx = (sz_items_count > 0)
+				? ((sz_item_current_idx >= sz_items_count)
+				   ? sz_items_count - 1 : sz_item_current_idx)
+				: 0;
+			const char* sz_combo_preview_value = (sz_items_count > 0)
+				? standard_reverb_zone_items[sz_preview_idx].c_str() : "";
 						
-			if (ImGui::BeginCombo("Sound Producer", sz_combo_preview_value, (ImGuiComboFlags)0))
+			if (sz_items_count > 0 && ImGui::BeginCombo("Sound Producer", sz_combo_preview_value, (ImGuiComboFlags)0))
 			{
 				for (int n = 0; n < standard_reverb_zone_items.size(); n++)
 				{
@@ -192,7 +202,12 @@ void EditMultipleStandardReverbZonesDialog::ChangeStandardReverbZoneAttributes()
 		if(m_effects_manager_ptr->standard_reverb_zones_vector.size() > 0)
 		{
 			
-			ReverbZone* thisReverbZone = &m_effects_manager_ptr->standard_reverb_zones_vector.at(m_selection_index);
+			// clamp: m_selection_index can be stale (zones deleted since the
+			// dialog was configured) and at() would throw out_of_range
+			size_t sr_edit_idx = m_selection_index;
+			size_t sr_count = m_effects_manager_ptr->standard_reverb_zones_vector.size();
+			if (sr_edit_idx >= sr_count) { sr_edit_idx = sr_count - 1; }
+			ReverbZone* thisReverbZone = &m_effects_manager_ptr->standard_reverb_zones_vector.at(sr_edit_idx);
 			
 			std::string name = std::string(sr_char_name);
 			thisReverbZone->SetNameString(name);	
@@ -316,7 +331,11 @@ void EditMultipleStandardReverbZonesDialog::ReverbZoneSelectedInListBox(size_t c
 	
 	if(m_effects_manager_ptr->standard_reverb_zones_vector.size() > 0)
 	{
-		ReverbZone* thisReverbZone = &m_effects_manager_ptr->standard_reverb_zones_vector.at(choice);
+		// clamp: a stale choice (from a deleted zone) must not throw at()
+		size_t sr_idx = choice;
+		size_t sr_count = m_effects_manager_ptr->standard_reverb_zones_vector.size();
+		if (sr_idx >= sr_count) { sr_idx = sr_count - 1; }
+		ReverbZone* thisReverbZone = &m_effects_manager_ptr->standard_reverb_zones_vector.at(sr_idx);
 		
 		tempStandardReverbProp = thisReverbZone->GetStandardReverbZoneProperties();
 		

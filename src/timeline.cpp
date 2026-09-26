@@ -318,7 +318,21 @@ void Timeline::DrawGui_Item()
 
 void Timeline::DrawTimelinePlotEditorGUI()
 {
-	
+	// every indexed access below uses edit_timeline_listview_activeIndex —
+	// keep it valid as defence-in-depth even if a caller mutated it behind us
+	ValidateTimelineListviewIndex();
+
+	// clamp the frame index into the 601-element plot arrays (same policy as
+	// SolveAudioPlaybackInTimeline / RunPlaybackWithTimeline): a scroll/knob
+	// edge can land past the last element and every add/remove-write below
+	// indexes the arrays with it
+	if(timelineSettings.current_timeline_frame >=
+	   MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+	{
+		timelineSettings.current_timeline_frame =
+			MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
+	}
+
 	static int obj_item_current_idx = 0; // Here we store our selection data as an index.
 	
 	//obj_choices_vec is rebuilt on every project load/resize (InitGUI

@@ -87,9 +87,19 @@ void EditMultipleEchoZonesDialog::DrawDialog()
 
 			//render echo zone dropdown 
 			static int ez_item_current_idx = 0; // Here we store our selection data as an index.
-			const char* ez_combo_preview_value = echo_zone_items[ez_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+			// the items vector is rebuilt from the LIVE zone count on every
+			// InitGUI(), so a stale ez_item_current_idx (zones deleted since
+			// it was last set) can exceed it. Clamp the preview index and
+			// skip the combo entirely when there are no zones to list.
+			const int ez_items_count = (int)echo_zone_items.size();
+			const int ez_preview_idx = (ez_items_count > 0)
+				? ((ez_item_current_idx >= ez_items_count)
+				   ? ez_items_count - 1 : ez_item_current_idx)
+				: 0;
+			const char* ez_combo_preview_value = (ez_items_count > 0)
+				? echo_zone_items[ez_preview_idx].c_str() : "";
 						
-			if (ImGui::BeginCombo("Echo Zone", ez_combo_preview_value, (ImGuiComboFlags)0))
+			if (ez_items_count > 0 && ImGui::BeginCombo("Echo Zone", ez_combo_preview_value, (ImGuiComboFlags)0))
 			{
 				for (int n = 0; n < echo_zone_items.size(); n++)
 				{
@@ -176,7 +186,12 @@ void EditMultipleEchoZonesDialog::ChangeEchoZoneAttributes()
 		if(m_effects_manager_ptr->echo_zones_vector.size() > 0)
 		{
 			
-			EchoZone* thisEchoZone = &m_effects_manager_ptr->echo_zones_vector.at(m_selection_index);
+			// clamp: m_selection_index can be stale (zones deleted since the
+			// dialog was configured) and at() would throw out_of_range
+			size_t ez_edit_idx = m_selection_index;
+			size_t ez_count = m_effects_manager_ptr->echo_zones_vector.size();
+			if (ez_edit_idx >= ez_count) { ez_edit_idx = ez_count - 1; }
+			EchoZone* thisEchoZone = &m_effects_manager_ptr->echo_zones_vector.at(ez_edit_idx);
 			
 			std::string name = std::string(ez_char_name);
 			thisEchoZone->SetNameString(name);	
@@ -292,7 +307,11 @@ void EditMultipleEchoZonesDialog::EchoZoneSelectedInListBox(size_t choice)
 	
 	if(m_effects_manager_ptr->echo_zones_vector.size() > 0)
 	{
-		EchoZone* thisEchoZone = &m_effects_manager_ptr->echo_zones_vector.at(choice);
+		// clamp: a stale choice (from a deleted zone) must not throw at()
+		size_t ez_idx = choice;
+		size_t ez_count = m_effects_manager_ptr->echo_zones_vector.size();
+		if (ez_idx >= ez_count) { ez_idx = ez_count - 1; }
+		EchoZone* thisEchoZone = &m_effects_manager_ptr->echo_zones_vector.at(ez_idx);
 		
 		strncpy(ez_char_name, thisEchoZone->GetNameString().c_str(), 32);
 		ez_char_name[31] = '\0';
