@@ -1,0 +1,1540 @@
+#include "timeline.h"
+
+#include "imgui.h"
+#include "backends/rlImGui.h"
+#include "backends/imfilebrowser.h"
+
+//include custom timeline based on imgui
+#include "backends/gui_timeline_imgui.h"
+
+#include <fstream> //for file read and write
+
+#include "dialog_var.h"
+
+#define MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT 601
+
+//timeline settings
+
+static size_t max_num_frames = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT;
+
+static int max_num_frames_to_display = 200;
+static int timeline_leftmost_frame = 0;
+static int timeline_rightmost_frame = max_num_frames_to_display;
+
+static float param_timeline_x = 0;
+static float position_param_timeline_y = 10;
+static float playback_param_timeline_y = 60;
+
+static TimelineSettings_ImGui timelineSettings = InitTimelineSettings_ImGui(max_num_frames,&timeline_leftmost_frame,&timeline_rightmost_frame,max_num_frames_to_display);
+
+static TimelineParameterSettings_ImGui positionTimelineSettings = InitTimelineParameterSettings_ImGui(max_num_frames,nullptr,param_timeline_x, position_param_timeline_y,
+																							&timeline_leftmost_frame,&timeline_rightmost_frame,max_num_frames_to_display);
+
+static TimelineParameterSettings_ImGui playbackMarkerTimelineSettings = InitTimelineParameterSettings_ImGui(max_num_frames,nullptr,param_timeline_x,playback_param_timeline_y,
+																								&timeline_leftmost_frame,&timeline_rightmost_frame,max_num_frames_to_display);
+
+bool IsFileBin(std::string filename)
+{
+	if(filename.length() < 4){return false;}
+	
+	if(filename.substr(filename.size() - 4, 4) == ".bin" )
+	{
+		return true;
+	}
+	
+	return false;
+}
+
+Timeline::Timeline()
+{
+	showTimeline = false;
+	
+	addPointToTimeline = false;
+	removePointFromTimeline = false;
+	
+	addPlaybackMarkerToTimeline = false;
+	removePlaybackMarkerFromTimeline = false;
+	
+	showTimelineParameterPropertiesBox = false;
+	
+	time_frame_rate = 1;
+	
+	timeline_plots_position.reserve(25);
+	
+	//initialize default save data
+	m_save_data.plots_save_data.reserve(25);
+	
+	m_save_data.number_of_plots = 0;
+	
+	
+}
+
+Timeline::~Timeline()
+{
+	
+	//delete all remaining timeline plot positions 
+	while(timeline_plots_position.size() != 0)
+	{
+		delete timeline_plots_position.back().timeline_points_posx;
+		delete timeline_plots_position.back().timeline_points_posy;
+		delete timeline_plots_position.back().timeline_points_posz;
+		delete timeline_plots_position.back().timeline_settings_bool_array;
+		timeline_plots_position.pop_back();
+	}
+	
+	//delete all remaining timeline plot playback markers
+	while(timeline_plots_playback_markers.size() != 0)
+	{
+		delete timeline_plots_playback_markers.back().timeline_playback_markers;
+		delete timeline_plots_playback_markers.back().timeline_settings_bool_array;
+		timeline_plots_playback_markers.pop_back();
+	}
+	
+}
+
+void Timeline::Init(std::vector <std::unique_ptr <SoundProducer> > *sound_producer_vector, Listener* listener)
+{
+	main_listener_ptr = listener;
+	sound_producer_vector_ref = sound_producer_vector;
+	
+	//add first timeline plot position for listener
+	Timeline::AddPlotPositionToTimeline("Default");
+	Timeline::AddPlotPlaybackMarkerToTimeline();
+	
+	//set array pointers to point to first timeline
+	positionTimelineSettings.array_points_ptr = timeline_plots_position[0].timeline_settings_bool_array;
+	playbackMarkerTimelineSettings.array_points_ptr = timeline_plots_playback_markers[0].timeline_settings_bool_array;
+	playbackMarkerTimelineSettings.draw_color = 0xAA0A0AFA; //Note ImGui color is alpha, blue, green, red.
+	positionTimelineSettings.draw_color = 0xAA0AEDFF; //Note ImGui color is alpha, blue, green, red.
+
+	
+}
+
+
+
+void Timeline::SetListenerInTimeline(Listener* listener_ptr){main_listener_ptr = listener_ptr;}
+
+void Timeline::SetAddPointToTimelineBool(bool state){addPointToTimeline = state;}
+void Timeline::SetRemovePointFromTimelineBool(bool state){removePointFromTimeline = state;}
+
+void Timeline::SetAddPlaybackMarkerToTimelineBool(bool state, PlaybackMarkerType type){addPlaybackMarkerToTimeline = state; addPlaybackMarkerToTimeline_type = type;}
+void Timeline::SetRemovePlaybackMarkerFromTimelineBool(bool state){removePlaybackMarkerFromTimeline = state;}
+
+void Timeline::AddPlotPositionToTimeline(std::string name)
+{
+	timeline_plots_position.emplace_back( TimelinePlotPosition{ new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT],
+																new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT],
+																new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT], 
+																new bool[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT] 
+															}
+										);
+	
+	for(size_t i = 0; i < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; i++)
+	{
+		timeline_plots_position.back().timeline_points_posx[i] = 0; 
+		timeline_plots_position.back().timeline_points_posy[i] = 0; 
+		timeline_plots_position.back().timeline_points_posz[i] = 0;
+
+		timeline_plots_position.back().timeline_settings_bool_array[i] = false;
+		timeline_plots_position.back().name = name;
+	}
+	
+	m_save_data.number_of_plots += 1;
+	
+	m_save_data.plots_save_data.emplace_back(TimelinePlotPositionSaveData({0, name, ""}) );
+}
+
+void Timeline::RemovePlotPositionFromTimeline(size_t& index)
+{
+	//delete points
+	delete timeline_plots_position[index].timeline_points_posx;
+	delete timeline_plots_position[index].timeline_points_posy;
+	delete timeline_plots_position[index].timeline_points_posz;
+	
+	std::swap(timeline_plots_position[index],timeline_plots_position.back());
+	timeline_plots_position.pop_back();
+	
+	m_save_data.number_of_plots -= 1;
+	
+	std::swap(m_save_data.plots_save_data[index],m_save_data.plots_save_data.back());
+	m_save_data.plots_save_data.pop_back();
+}
+
+void Timeline::AddPlotPlaybackMarkerToTimeline()
+{
+	timeline_plots_playback_markers.emplace_back( TimelinePlotPlaybackMarker{ new PlaybackMarkerType[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT], 
+													new bool[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT] }
+										);
+	
+	for(size_t i = 0; i < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; i++)
+	{
+		timeline_plots_playback_markers.back().timeline_playback_markers[i] = PlaybackMarkerType::NONE;
+
+		timeline_plots_playback_markers.back().timeline_settings_bool_array[i] = false;
+	}
+}
+
+void Timeline::RemovePlotPlaybackMarkerFromTimeline(size_t& index)
+{
+	delete timeline_plots_playback_markers[index].timeline_playback_markers;
+	
+	//switch out to be deleted with empty one at the end of vector, delete at end
+	std::swap(timeline_plots_playback_markers[index],timeline_plots_playback_markers.back());
+	timeline_plots_playback_markers.pop_back();
+}
+
+void Timeline::SetShowTimelineBool(bool state){showTimeline = state;}
+
+static int current_sound_producer_editing_index = -1;
+
+void Timeline::SetObjectPicked(int index, ObjectType type)
+{
+	switch(type)
+	{
+		case ObjectType::NONE:{ m_final_edit_obj_index = -1; break;}
+		case ObjectType::LISTENER:{ m_final_edit_obj_index = 0; current_sound_producer_editing_index = -1; break;}
+		case ObjectType::SOUND_PRODUCER:
+		{ 
+			m_final_edit_obj_index = index + 1; 
+			current_sound_producer_editing_index = index; 
+			break;
+		}
+	}
+	
+}
+
+void Timeline::SetTimeFrameRate(size_t rate){time_frame_rate = rate;}
+
+
+//dropdown list view for object being edited.
+static int edit_obj_listview_activeIndex = 0;
+static bool obj_choice_changed = false;
+static std::vector <std::string> obj_choices_vec;
+
+//variables for text input of timeline
+static bool addTimeline = false;
+static char textInput[32] = { 0 };
+
+//dropdown list view for timeline being edited
+static int edit_timeline_listview_activeIndex = 0;
+static std::vector <std::string> timeline_choices_vec;
+static bool timeline_choice_changed = false;
+
+//variables for frame file save/load
+static ImGui::FileBrowser frames_fileDialog_creator(ImGuiFileBrowserFlags_EnterNewFilename);
+static ImGui::FileBrowser frames_fileDialog_loader(0);
+
+//counter variable for timeline
+static uint32_t second_frame_count = 0;
+
+static bool frameRateBoxEditMode = false;
+
+enum class FileFrameState : std::uint8_t{NONE=0, SAVE_NEW,LOAD_NEW,SAVE_CURRENT};
+static FileFrameState frames_file_state = FileFrameState::NONE;
+
+
+void Timeline::InitGUI()
+{
+	obj_choices_vec.clear();
+	
+	if(sound_producer_vector_ref)
+	{
+		obj_choices_vec.resize(sound_producer_vector_ref->size() + 2);
+		
+		obj_choices_vec[0] = "None";
+		obj_choices_vec[1] = "Listener";		
+		
+		for(size_t i = 0; i < sound_producer_vector_ref->size(); i++)
+		{
+			obj_choices_vec[i+2] = sound_producer_vector_ref->at(i)->GetNameString() 
+									+ "( " + std::to_string(i) + " )";		
+		}
+						
+	}
+	
+	obj_choice_changed = false;
+	
+	timeline_choices_vec.clear();
+	timeline_choices_vec.resize(timeline_plots_position.size());
+	
+	for(size_t i = 0; i < timeline_plots_position.size(); i++)
+	{
+		timeline_choices_vec[i] = timeline_plots_position[i].name + "( " + std::to_string(i) + " )";
+	}
+	
+	timeline_choice_changed = false;
+		
+}
+
+
+void Timeline::DrawGui_Item()
+{
+	//draw timeline
+	
+	if( showTimeline )
+	{
+		
+		DrawTimelinePlotEditorGUI();
+		
+		DrawFramesGUI();
+		
+		DrawFramesFileDialog();
+		
+		DrawTimelinePointsGUI();
+				
+	}
+	
+}
+
+
+
+void Timeline::DrawTimelinePlotEditorGUI()
+{
+	
+	static int obj_item_current_idx = 0; // Here we store our selection data as an index.
+	const char* obj_combo_preview_value = obj_choices_vec[obj_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+	static ImGuiComboFlags obj_flags = 0;
+				
+	if (ImGui::BeginCombo("Object", obj_combo_preview_value, obj_flags))
+	{
+		for (int n = 0; n < obj_choices_vec.size(); n++)
+		{
+			const bool is_selected = (obj_item_current_idx == n);
+			if (ImGui::Selectable(obj_choices_vec[n].c_str(), is_selected))
+			{
+				obj_item_current_idx = n;
+				edit_obj_listview_activeIndex = obj_item_current_idx;
+				obj_choice_changed = true;
+			}
+
+			// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+			if (is_selected)
+				ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	
+	ImGui::Separator();
+												
+	//Draw active timeline label
+	ImGui::Text("Timeline Settings");
+	
+	static int timeline_item_current_idx = 0; // Here we store our selection data as an index.
+	const char* timeline_combo_preview_value = timeline_choices_vec[timeline_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+	static ImGuiComboFlags timeline_obj_flags = 0;
+				
+	if (ImGui::BeginCombo("Timeline", timeline_combo_preview_value, timeline_obj_flags))
+	{
+		for (int n = 0; n < timeline_choices_vec.size(); n++)
+		{
+			const bool is_selected = (timeline_item_current_idx == n);
+			if (ImGui::Selectable(timeline_choices_vec[n].c_str(), is_selected))
+			{
+				timeline_item_current_idx = n;
+				edit_timeline_listview_activeIndex = timeline_item_current_idx;
+				timeline_choice_changed = true;
+			}
+
+			// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+			if (is_selected)
+				ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	
+	//draw add button to add another timeline
+	if(ImGui::Button("Add Timeline"))
+	{
+		addTimeline = true;
+	}
+	
+	
+	if(addTimeline)
+	{
+		//prompt for timeline name
+        
+        // Always center this window when appearing
+		ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+		ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		
+		ImGui::OpenPopup("Create Timeline");
+
+		if (ImGui::BeginPopupModal("Create Timeline", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			//display name input box
+			ImGui::InputText("Name", textInput, 32);
+			
+			ImGui::Separator();
+			
+			//display ok button
+			if(ImGui::Button("OK"))
+			{
+				addTimeline = false;
+			
+				//add timeline position and its name
+				Timeline::AddPlotPositionToTimeline(std::string(textInput));
+				//add timeline playback marker
+				Timeline::AddPlotPlaybackMarkerToTimeline();
+				
+				//refresh timeline gui after adding timeline
+				Timeline::InitGUI();
+				
+				strcpy(textInput, "\0");
+			}
+			
+			//display cancel button
+			if(ImGui::Button("Cancel"))
+			{
+				addTimeline = false;
+				strcpy(textInput, "\0");
+			}
+			
+			ImGui::EndPopup();
+		}
+		
+	}
+	
+	//draw remove button to remove current edited timeline
+	if( ImGui::Button("Remove Timeline") )
+	{
+		//remove timeline position
+		size_t index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+		
+		//if index is more than 0 or valid
+		if(index)
+		{
+			Timeline::RemovePlotPositionFromTimeline(index);
+			Timeline::RemovePlotPlaybackMarkerFromTimeline(index);
+		}
+		
+	}
+	
+	//if timeline choice edited has changed
+	if(timeline_choice_changed)
+	{
+		timeline_choice_changed = false;
+				
+		edit_obj_listview_activeIndex = timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit;
+	}
+	
+	//if object choice edited by timeline changes													
+	if(obj_choice_changed)
+	{
+		obj_choice_changed = false;
+		
+		timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit = edit_obj_listview_activeIndex;
+		
+		timeline_plots_playback_markers[edit_timeline_listview_activeIndex].indexObjectToEdit = edit_obj_listview_activeIndex;
+		
+		m_save_data.plots_save_data[edit_timeline_listview_activeIndex].edit_index = edit_obj_listview_activeIndex;
+	}
+	
+	
+	if(edit_timeline_listview_activeIndex >= 0)
+	{
+		positionTimelineSettings.array_points_ptr = timeline_plots_position[edit_timeline_listview_activeIndex].timeline_settings_bool_array;
+		playbackMarkerTimelineSettings.array_points_ptr = timeline_plots_playback_markers[edit_timeline_listview_activeIndex].timeline_settings_bool_array;
+	}
+	else
+	{
+		positionTimelineSettings.array_points_ptr = nullptr;
+		playbackMarkerTimelineSettings.array_points_ptr = nullptr;
+	}
+}
+
+void Timeline::ShowPropertiesBox(float x, float y, int timeline_index, int timeline_current_frame)
+{
+	//skip if timeline current frame is more than max number of points in timeline plot
+	if(timeline_current_frame >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT){return;}
+	
+	std::string playback_marker_str = "";
+	
+	//if there is playback marker info
+	if(timeline_plots_playback_markers[timeline_index].timeline_settings_bool_array[timeline_current_frame])
+	{
+		playback_marker_str = "Playback Marker: ";
+		PlaybackMarkerType pm_type = timeline_plots_playback_markers[timeline_index].timeline_playback_markers[timeline_current_frame];
+	
+		switch(pm_type)
+		{
+			case PlaybackMarkerType::NONE:{ playback_marker_str += "None"; break;}
+			case PlaybackMarkerType::START_PLAY:{ playback_marker_str += "Start Play"; break;}
+			case PlaybackMarkerType::PAUSE:{ playback_marker_str += "Pause"; break;}
+			case PlaybackMarkerType::RESUME:{ playback_marker_str += "Resume"; break;}
+			case PlaybackMarkerType::END_PLAY:{ playback_marker_str += "End Play"; break;}
+		}
+	}
+	
+	std::string position_str = "";
+	
+	//if there is timeline plot position info
+	if(timeline_plots_position[timeline_index].timeline_settings_bool_array[timeline_current_frame])
+	{
+		float pos_x = timeline_plots_position[timeline_index].timeline_points_posx[timeline_current_frame];
+		float pos_y = timeline_plots_position[timeline_index].timeline_points_posy[timeline_current_frame];
+		float pos_z = timeline_plots_position[timeline_index].timeline_points_posz[timeline_current_frame];
+		
+		position_str = "position(x,y,z): \n" + std::to_string(pos_x) + " " + std::to_string(pos_y) + " " + std::to_string(pos_z);
+	}
+	
+	std::string timeframe_str = "Timeline Frame: " + std::to_string(timeline_current_frame);
+	
+	std::string message = timeframe_str + "\n" + position_str + "\n" + playback_marker_str;
+	
+	ImDrawList* draw_list = ImGui::GetWindowDrawList();
+	ImVec2 canvas_pos = ImGui::GetCursorScreenPos(); // ImDrawList API uses screen coordinates!
+	ImVec2 canvas_size = ImGui::GetContentRegionAvail(); // ImDrawList API uses screen coordinates!
+		
+	float cursor_x = timelineSettings.frameDrawX;
+		
+	ImVec2 timeline_prop_box_pos = ImVec2{cursor_x, canvas_pos.y + 0.5*canvas_size.y};
+	draw_list->AddText(timeline_prop_box_pos, 0xAAFFFFFF, message.c_str());
+	
+}
+
+
+void Timeline::DrawTimelinePoints_ImGUI_version()
+{
+	float leftBound = 200;
+	float upperBound = 400;
+	timelineSettings.mouseArea = {leftBound, upperBound , static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())};
+		
+	Timeline_ImGui(&timelineSettings);
+		
+	//draw position timeline if there are points to draw
+	if(positionTimelineSettings.array_points_ptr)
+	{
+		//if adding point to timeline
+		if(addPointToTimeline && timelineSettings.frameSelected)
+		{
+			bool addPoint = false;
+			float x,y,z;
+			
+			int edit_index = timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit;
+			
+			//std::cout << "edit index: " << edit_index << std::endl;
+			
+			//if listener
+			if(edit_index == 1)
+			{
+				//get position of listener
+				x = main_listener_ptr->getPositionX();
+				y = main_listener_ptr->getPositionY();
+				z = main_listener_ptr->getPositionZ();
+				addPoint = true;
+				
+			}
+			//else if sound producer
+			else if(edit_index >= 2)
+			{
+				//get position of sound	producer
+				
+				x = sound_producer_vector_ref->at(edit_index - 2)->GetPositionX();
+				y = sound_producer_vector_ref->at(edit_index - 2)->GetPositionY();
+				z = sound_producer_vector_ref->at(edit_index - 2)->GetPositionZ();
+				
+				addPoint = true;
+				
+			}
+			else
+			{
+				//do nothing
+				addPoint = false;
+			}
+			
+			if(addPoint)
+			{
+				//add point to graphical timeline depending on frame selected
+				timeline_plots_position[edit_timeline_listview_activeIndex].timeline_settings_bool_array[timelineSettings.current_timeline_frame] = true;
+				
+				//add point to position timeline
+				timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posx[timelineSettings.current_timeline_frame] = x; 
+				timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posy[timelineSettings.current_timeline_frame] = y; 
+				timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posz[timelineSettings.current_timeline_frame] = z;
+			}
+			
+			addPointToTimeline = false;
+		}
+		else if(addPointToTimeline)
+		{
+			addPointToTimeline = false;
+		}		
+		
+		if(removePointFromTimeline && timelineSettings.frameSelected)
+		{
+			
+			//remove point from graphical timeline depending on frame selected
+			timeline_plots_position[edit_timeline_listview_activeIndex].timeline_settings_bool_array[timelineSettings.current_timeline_frame] = false;
+			
+			//remove point from position timeline with reset
+			timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posx[timelineSettings.current_timeline_frame] = 0; 
+			timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posy[timelineSettings.current_timeline_frame] = 0; 
+			timeline_plots_position[edit_timeline_listview_activeIndex].timeline_points_posz[timelineSettings.current_timeline_frame] = 0;
+			
+			removePointFromTimeline = false;
+		}
+		else if(removePointFromTimeline)
+		{
+			removePointFromTimeline = false;
+		}
+			
+		Timeline_Parameter_ImGui(&positionTimelineSettings);		
+	}
+	
+	//draw playback markers
+	if(playbackMarkerTimelineSettings.array_points_ptr)
+	{
+		//if adding playback marker to timeline
+		if(addPlaybackMarkerToTimeline && addPlaybackMarkerToTimeline_type != PlaybackMarkerType::NONE 
+			&& timelineSettings.frameSelected)
+		{
+			bool addMarker = false;
+			
+			int edit_index = timeline_plots_playback_markers[edit_timeline_listview_activeIndex].indexObjectToEdit;
+			
+			//std::cout << "edit index: " << edit_index << std::endl;
+			
+			//if sound producer
+			if(edit_index >= 2)
+			{
+				//get position of sound	producer
+				
+				addMarker = true;
+				
+			}
+			else
+			{
+				//do nothing
+				addMarker = false;
+			}
+			
+			if(addMarker)
+			{
+				//add marker to graphical timeline depending on frame selected
+				timeline_plots_playback_markers[edit_timeline_listview_activeIndex].timeline_settings_bool_array[timelineSettings.current_timeline_frame] = true;
+				
+				//add marker to timeline plot data
+				timeline_plots_playback_markers[edit_timeline_listview_activeIndex].timeline_playback_markers[timelineSettings.current_timeline_frame] = addPlaybackMarkerToTimeline_type;
+			}
+			
+			addPlaybackMarkerToTimeline = false;
+			addPlaybackMarkerToTimeline_type = PlaybackMarkerType::NONE;
+		}
+		else if(addPlaybackMarkerToTimeline)
+		{
+			addPlaybackMarkerToTimeline = false;
+		}		
+		
+		if(removePlaybackMarkerFromTimeline && timelineSettings.frameSelected)
+		{
+			
+			//remove point from graphical timeline depending on frame selected
+			timeline_plots_playback_markers[edit_timeline_listview_activeIndex].timeline_settings_bool_array[timelineSettings.current_timeline_frame] = false;
+			
+			//remove point from position timeline with reset
+			timeline_plots_playback_markers[edit_timeline_listview_activeIndex].timeline_playback_markers[timelineSettings.current_timeline_frame] = PlaybackMarkerType::NONE;
+			
+			removePlaybackMarkerFromTimeline = false;
+		}
+		else if(removePlaybackMarkerFromTimeline)
+		{
+			removePlaybackMarkerFromTimeline = false;
+		}
+			
+		Timeline_Parameter_ImGui(&playbackMarkerTimelineSettings);
+	}
+	
+	//if current time frame is valid and selected
+	if(timelineSettings.current_timeline_frame >= 0 && timelineSettings.frameSelected 
+		&& showTimelineParameterPropertiesBox)
+	{
+		//show properties in a box
+		//show to the left of timeline marker 
+		Timeline::ShowPropertiesBox(leftBound,upperBound + 100,edit_timeline_listview_activeIndex,timelineSettings.current_timeline_frame);
+	}
+}
+
+static int track_item = 50;
+static bool enable_track = false;
+
+static const float pixel_tick_conversion = 600 / 100; //600 pixels per 100 ticks  
+
+void Timeline::DrawTimelinePointsGUI()
+{
+	
+	//draw Imgui window along with texture
+	if(ImGui::TreeNode("Timeline Points"))
+	{
+		
+		bool Open = true;
+		if(ImGui::Begin("Timeline Points Window",&Open,
+					ImGuiWindowFlags_NoScrollbar
+					)
+		)
+		{
+			ImGuiStyle& style = ImGui::GetStyle();
+			
+			float child_height = 0.9*ImGui::GetContentRegionAvail().y + style.ScrollbarSize + style.WindowPadding.y * 2.0f;
+            ImGuiWindowFlags child_flags = ImGuiWindowFlags_HorizontalScrollbar;
+            ImGuiID child_id = ImGui::GetID((void*)(intptr_t)0);
+            bool child_is_visible = ImGui::BeginChild(child_id, ImVec2(0, child_height), true, child_flags);
+            if (child_is_visible) // Avoid calling SetScrollHereY when running with culled items
+            {
+				
+				DrawTimelinePoints_ImGUI_version();
+				
+                for (int item = 0; item < 100; item++)
+                {
+                    if (item > 0)
+                        ImGui::SameLine();
+                    if (enable_track && item == track_item)
+                    {
+                        //ImGui::TextColored(ImVec4(1, 1, 0, 1), "Item %d", item);
+                        ImGui::SetScrollHereX(0.0f); // 0.0f:left, 0.5f:center, 1.0f:right
+                    }
+                    else
+                    {
+                        ImGui::Text(" ", item);
+                    }
+                }
+               
+               
+            }
+            
+            float scroll_x = ImGui::GetScrollX();
+            float scroll_max_x = ImGui::GetScrollMaxX();
+			ImGui::EndChild();
+		}
+		ImGui::End();	
+		
+		ImGui::TreePop();
+	}
+	
+	
+	
+	
+}
+
+
+void Timeline::DrawFramesGUI()
+{
+	if(ImGui::TreeNode("Frames"))
+	{
+		//draw new frames button
+		if( ImGui::Button("New Frames") )
+		{
+			//replace current file in use for frames for plot with empty filepath
+			size_t edit_index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+			timeline_plots_position[edit_index].frames_filepath = "";
+			
+			//reset all points to false which erases it from GUI.
+			for(uint16_t i = 0; i < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; i++)
+			{
+				timeline_plots_position[edit_index].timeline_settings_bool_array[i] = false;
+				timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i] = false;
+			}
+		}
+		
+		ImGui::SameLine();
+		
+		//draw load frames button
+		if( ImGui::Button("Load Frames") )
+		{
+			frames_file_state = FileFrameState::LOAD_NEW;
+			
+			frames_fileDialog_loader.SetTitle("Load frames");
+			frames_fileDialog_loader.SetTypeFilters({ ".bin" });
+			
+			//keep directory path set to the data directory for timeline data
+			std::filesystem::path path = m_data_dir_path.c_str();
+			frames_fileDialog_loader.SetPwd(path);
+			
+			frames_fileDialog_loader.Open();
+			
+			global_dialog_in_use = true;
+		}
+		
+		ImGui::SameLine();
+		
+		//draw save frames button
+		if( ImGui::Button("Save Frames") )
+		{
+			frames_file_state = FileFrameState::SAVE_CURRENT;
+			global_dialog_in_use = true;
+		}
+		
+		ImGui::SameLine();
+		
+		//draw save as frames button
+		if( ImGui::Button("Save As New Frames") )
+		{
+			frames_file_state = FileFrameState::SAVE_NEW;
+			
+			frames_fileDialog_creator.SetTitle("Save new frames");
+			frames_fileDialog_creator.SetTypeFilters({ ".bin" });
+			
+			//keep directory path set to the data directory for timeline data
+			std::filesystem::path path = m_data_dir_path.c_str();
+			frames_fileDialog_creator.SetPwd(path);
+						
+			frames_fileDialog_creator.Open();
+			
+			global_dialog_in_use = true;
+		}
+		
+		ImGui::Spacing();
+			
+		//draw frame rate control
+		if (ImGui::InputInt("Frame Rate", &time_frame_rate) )
+		{
+			second_frame_count = 0; //reset just in case
+		} 
+		
+		ImGui::TreePop();
+	}
+	
+}
+
+void Timeline::DrawFramesFileDialog()
+{
+	
+	//file operation logic
+	
+	//force directory to be in designated data directory
+	if(frames_fileDialog_creator.GetPwd().string() != m_data_dir_path)
+	{
+		//keep directory path set to the data directory for timeline data
+		std::filesystem::path path = m_data_dir_path.c_str();
+		frames_fileDialog_creator.SetPwd(path);
+	}
+	
+	//force directory to be in designated data directory
+	if(frames_fileDialog_loader.GetPwd().string() != m_data_dir_path)
+	{
+		//keep directory path set to the data directory for timeline data
+		std::filesystem::path path = m_data_dir_path.c_str();
+		frames_fileDialog_loader.SetPwd(path);
+	}
+	
+	
+	if(frames_file_state == FileFrameState::LOAD_NEW)
+	{
+			
+		if (frames_fileDialog_loader.HasSelected())
+		{			
+			// Load frames file (if supported extension)
+			
+			// save project file (if supported extension)
+			std::string full_filename = frames_fileDialog_loader.GetSelected().string();
+			std::string top_dir = frames_fileDialog_loader.GetPwd().string();
+			
+			int end_dir_name_pos = top_dir.length();
+			int num_char_copy = full_filename.length() - end_dir_name_pos;
+			
+			std::string filename = full_filename.substr(end_dir_name_pos,num_char_copy);
+			
+			std::cout << "load filename for frames: " << filename << std::endl;
+					
+			if (IsFileBin(filename) )
+			{				
+				//load frames from file
+				size_t index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+				
+				//only save filename
+				timeline_plots_position[index].frames_filepath = filename;
+				m_save_data.plots_save_data[index].frames_filepath = filename;
+				
+				std::string full_filepath = m_data_dir_path + filename;
+				Timeline::LoadTimeFramesFromFile(full_filename);
+			}
+			else
+			{
+				printf("Error! Tried to load frames file that was not of extension .bin!\n");
+			}
+			
+			frames_file_state = FileFrameState::NONE;
+			frames_fileDialog_loader.ClearSelected();
+			global_dialog_in_use = false;
+		}
+		
+	}
+	else if(frames_file_state == FileFrameState::SAVE_NEW)
+	{
+		
+		if (frames_fileDialog_creator.HasSelected())
+		{
+			// save project file (if supported extension)
+			std::string full_filename = frames_fileDialog_creator.GetSelected().string();
+			std::string top_dir = frames_fileDialog_creator.GetPwd().string();
+			
+			int end_dir_name_pos = top_dir.length();
+			int num_char_copy = full_filename.length() - end_dir_name_pos;
+			
+			std::string filename = full_filename.substr(end_dir_name_pos,num_char_copy);
+			
+			//if there is not .bin extension in file
+			if(!IsFileBin(filename))
+			{
+				//append .bin extension to file
+				filename = filename + ".bin";
+			}
+				
+			std::cout << "save filename for new frames: " << filename << std::endl;
+			
+			//save frames to file
+			size_t index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+			//only save filename
+			timeline_plots_position[index].frames_filepath = filename;
+			m_save_data.plots_save_data[index].frames_filepath = filename;
+			
+			std::string full_filepath = m_data_dir_path + filename;
+			Timeline::SaveTimeFramesToFile(full_filepath);
+			
+			frames_file_state = FileFrameState::NONE;
+			frames_fileDialog_creator.ClearSelected();
+			global_dialog_in_use = false;
+		}
+	}
+	else if(frames_file_state == FileFrameState::SAVE_CURRENT)
+	{
+		//save frames to file
+		size_t index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+		
+		//only save
+		std::string full_filepath = m_data_dir_path + timeline_plots_position[index].frames_filepath;
+		std::cout << "save filename for current frames: " << full_filepath << std::endl;
+		Timeline::SaveTimeFramesToFile(full_filepath);
+		
+		frames_file_state = FileFrameState::NONE;
+		global_dialog_in_use = false;
+	}
+	
+	frames_fileDialog_loader.Display();
+	frames_fileDialog_creator.Display();
+}
+
+static PlaybackMarkerTraveler playback_marker_traveler;
+
+void Timeline::SolveAudioPlaybackInTimeline(ImmediateModeSoundPlayer* im_sound_player_ptr)
+{
+	
+	float progressValue = 0.0f;
+	
+	float progressValueIncrement = 1 / timeline_plots_playback_markers.size();
+	
+	//for every audio playback marker plot
+	for(size_t i = 0; i < timeline_plots_playback_markers.size(); i++)
+	{
+		//if object edited by playback marker plot is not a sound producer , skip
+		bool is_sound_producer = false;
+		
+		//skip playback marker plot if not sound producer
+		if(timeline_plots_playback_markers[i].indexObjectToEdit >= 2 && timeline_plots_playback_markers[i].indexObjectToEdit - 2 < sound_producer_vector_ref->size())
+		{
+			is_sound_producer = true;
+			if(!is_sound_producer){continue;}
+		}
+		
+		//check from zero to current timeline frame
+		for(size_t it_frame = 0; it_frame < timelineSettings.current_timeline_frame; it_frame++)
+		{
+			//skip frame if there is no playback marker
+			if(!timeline_plots_playback_markers[i].timeline_settings_bool_array[it_frame])
+			{
+				continue;
+			}
+			
+			//determine current playback time for sound producer
+			PlaybackMarkerType& pm_type = timeline_plots_playback_markers[i].timeline_playback_markers[it_frame];
+			playback_marker_traveler.RunTravelerBasedOnPlaybackMarkerType(pm_type);
+		}
+		
+		//if time recorded in playback marker is not zero
+		if(playback_marker_traveler.GetCurrentTime() > 0.0f)
+		{
+			int buffer_player_index = timeline_plots_playback_markers[i].indexObjectToEdit - 2;
+			double& current_time = playback_marker_traveler.GetCurrentTime();
+			
+			//forward audio playback of sound producer
+			im_sound_player_ptr->SetCurrentTimeInBuffer_ComplexPlayback(buffer_player_index,current_time);
+			
+			//set play state depending on playback marker traveler state
+			switch(playback_marker_traveler.GetCurrentState())
+			{
+				case PlaybackMarkerTraveler::TravelerState::FORWARD_TIME:
+				{
+					im_sound_player_ptr->SetBufferPlayerToPlay_ComplexPlayback(buffer_player_index); 
+					break;
+				}
+				case PlaybackMarkerTraveler::TravelerState::PAUSED:
+				{
+					im_sound_player_ptr->SetBufferPlayerToPause_ComplexPlayback(buffer_player_index);
+					break;
+				}
+				case PlaybackMarkerTraveler::TravelerState::NONE:
+				{
+					break;
+				}
+			}
+			
+		}
+		
+		//show progress bar indicating status of solving of audio playback
+		//GuiProgressBar((Rectangle){ 320, 460, 200, 20 }, NULL, NULL, progressValue, 0, 1);
+		ImGui::ProgressBar(progressValue);
+		
+		//update progress bar after finishing checking one playback marker plot
+		progressValue += progressValueIncrement;
+		
+		//reset playback marker traveler
+		playback_marker_traveler.ResetTraveler();
+	}
+}
+
+
+void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player_ptr)
+{
+	//set edit mode to false so that no editing happens during playback which can lead to errors
+	timelineSettings.editMode = false;
+	
+	
+	//increment timeline frame assuming constant 60 frames per second
+	//increment number of frames based on time frame rate which is number of frames per second
+	second_frame_count++;
+	
+	//if 1 second divided by time frame rate has passed
+	//example: 60 frames_per_second / 3 time_frames_per_second = 20 frames_per_time_frame_second
+	if(time_frame_rate == 0){return;}
+	
+	//for every time frame
+	if(second_frame_count == 60 / time_frame_rate)
+	{
+		
+		timelineSettings.current_timeline_frame++;
+		second_frame_count = 0;
+		
+		
+		//for every position plot
+		for(size_t i = 0; i < timeline_plots_position.size(); i++)
+		{
+			//if there is not a point at current timeline_frame, 
+			//skip rest of loop code below and go to next iteration
+			if(!timeline_plots_position[i].timeline_settings_bool_array[timelineSettings.current_timeline_frame])
+			{
+				continue;
+			}
+			
+			//get location
+			float& x = timeline_plots_position[i].timeline_points_posx[timelineSettings.current_timeline_frame]; 
+			float& y = timeline_plots_position[i].timeline_points_posy[timelineSettings.current_timeline_frame]; 
+			float& z = timeline_plots_position[i].timeline_points_posz[timelineSettings.current_timeline_frame];
+			
+			//if listener
+			if(timeline_plots_position[i].indexObjectToEdit == 1)
+			{
+				main_listener_ptr->setPositionX(x);
+				main_listener_ptr->setPositionY(y);
+				main_listener_ptr->setPositionZ(z);
+			}
+			//else if sound producer
+			else if(timeline_plots_position[i].indexObjectToEdit >= 2 && timeline_plots_position[i].indexObjectToEdit - 2 < sound_producer_vector_ref->size())
+			{
+				sound_producer_vector_ref->at(timeline_plots_position[i].indexObjectToEdit - 2)->SetPositionX(x);
+				sound_producer_vector_ref->at(timeline_plots_position[i].indexObjectToEdit - 2)->SetPositionY(y);
+				sound_producer_vector_ref->at(timeline_plots_position[i].indexObjectToEdit - 2)->SetPositionZ(z);
+			}
+		}
+		
+		//for every playback marker plot
+		for(size_t i = 0; i < timeline_plots_playback_markers.size(); i++)
+		{
+			//if there is not a point at current timeline_frame, 
+			//skip rest of loop code below and go to next iteration
+			if(!timeline_plots_playback_markers[i].timeline_settings_bool_array[timelineSettings.current_timeline_frame])
+			{
+				continue;
+			}
+			
+			//if object edited is sound producer
+			if(timeline_plots_playback_markers[i].indexObjectToEdit >= 2 && timeline_plots_playback_markers[i].indexObjectToEdit - 2 < sound_producer_vector_ref->size())
+			{
+				//buffer player index is linked to sound producer in im sound player
+				int buffer_player_index = timeline_plots_position[i].indexObjectToEdit - 2;
+				
+				switch(timeline_plots_playback_markers[i].timeline_playback_markers[timelineSettings.current_timeline_frame])
+				{
+					case PlaybackMarkerType::NONE:{ break;}
+					case PlaybackMarkerType::START_PLAY:{im_sound_player_ptr->SetBufferPlayerToPlay_ComplexPlayback(buffer_player_index); break;}
+					case PlaybackMarkerType::RESUME:{im_sound_player_ptr->SetBufferPlayerToPlay_ComplexPlayback(buffer_player_index); break;}
+					case PlaybackMarkerType::PAUSE:{im_sound_player_ptr->SetBufferPlayerToPause_ComplexPlayback(buffer_player_index); break;}
+					case PlaybackMarkerType::END_PLAY:{im_sound_player_ptr->SetBufferPlayerToStop_ComplexPlayback(buffer_player_index); break;}
+				}				
+			}
+		}
+		
+	}
+	
+}
+
+void Timeline::ResumeEditModeInTimeline()
+{
+	timelineSettings.editMode = true;
+	second_frame_count = 0;
+}
+
+//struct
+struct TimeFramePositionPlaybackData{
+	uint16_t index;
+	uint8_t position_exist;
+	float x;
+	float y;
+	float z;
+	uint8_t playback_marker_exist;
+	uint8_t playback_marker_type;
+};
+
+// IMPORTANT NOTE
+// 3d audio producer saves and loads binary data in little endian 
+// if system is big endian, then, binary data is converted to big endian
+// otherwise if system is little endian, binary data is not converted
+
+static float ReverseFloat( const float inFloat )
+{
+   float retVal;
+   char *floatToConvert = ( char* ) & inFloat;
+   char *returnFloat = ( char* ) & retVal;
+
+   // swap the bytes into a temporary buffer
+   returnFloat[0] = floatToConvert[3];
+   returnFloat[1] = floatToConvert[2];
+   returnFloat[2] = floatToConvert[1];
+   returnFloat[3] = floatToConvert[0];
+
+   return retVal;
+}
+
+static uint16_t ReverseInt_16bit(const uint16_t val)
+{
+	return (val << 8) | (val >> 8 );
+}
+
+static bool IsSystemBigEndian()
+{
+    uint16_t word = 1; // 0x0001
+    uint8_t *first_byte = (uint8_t*) &word; // points to the first byte of word
+    return !(*first_byte); // true if the first byte is zero
+}
+
+void Timeline::LoadSaveData(TimelineSaveData& save_data)
+{
+	m_save_data = save_data;
+	
+	//assuming m_save_data has been modified from loading from xml file
+	timeline_plots_position.clear();
+	timeline_plots_playback_markers.clear();
+	
+	timeline_plots_position.resize(save_data.number_of_plots);
+	timeline_plots_playback_markers.resize(save_data.number_of_plots);
+	
+	//check if system is big endian
+	bool systemIsBigEndian = IsSystemBigEndian();
+	
+	//for every timeline plot
+	for(size_t i = 0; i < timeline_plots_position.size();i++)
+	{
+		//load name
+		timeline_plots_position[i].name = save_data.plots_save_data[i].name;
+		
+		//load edit object index
+		timeline_plots_position[i].indexObjectToEdit = save_data.plots_save_data[i].edit_index;
+		timeline_plots_playback_markers[i].indexObjectToEdit = save_data.plots_save_data[i].edit_index;
+		
+		//load frame filepath
+		timeline_plots_position[i].frames_filepath = save_data.plots_save_data[i].frames_filepath;
+		
+		//initialize points of timeline frame
+		timeline_plots_position[i].timeline_points_posx = new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		timeline_plots_position[i].timeline_points_posy = new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		timeline_plots_position[i].timeline_points_posz = new float[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		timeline_plots_position[i].timeline_settings_bool_array = new bool[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		
+		//initialize playback markers of timeline frame
+		timeline_plots_playback_markers[i].timeline_playback_markers = new PlaybackMarkerType[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		timeline_plots_playback_markers[i].timeline_settings_bool_array = new bool[MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT];
+		
+		for(size_t it = 0; it < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; it++)
+		{
+			timeline_plots_position[i].timeline_points_posx[it] = 0; 
+			timeline_plots_position[i].timeline_points_posy[it] = 0; 
+			timeline_plots_position[i].timeline_points_posz[it] = 0;
+
+			timeline_plots_position[i].timeline_settings_bool_array[it] = false;
+			
+			timeline_plots_playback_markers[i].timeline_playback_markers[it] = PlaybackMarkerType::NONE;
+			
+			timeline_plots_playback_markers[i].timeline_settings_bool_array[it] = false;
+		}
+		
+		if(timeline_plots_position[i].frames_filepath != "")
+		{
+			//open file for reading
+			std::string full_frame_path = m_data_dir_path + timeline_plots_position[i].frames_filepath; 
+			std::ifstream infile (full_frame_path,std::ifstream::binary | std::ifstream::in);
+			
+			if(!infile)
+			{
+				std::cout << "Unable to open file for reading: " << full_frame_path << std::endl;
+				continue;
+			}
+			
+			
+			
+			//if system is not big endian, assuming this is little endian
+			if(!systemIsBigEndian)
+			{
+				//while have not reached end of file
+				while( !infile.eof())
+				{
+					
+					TimeFramePositionPlaybackData data;
+					
+					//read point from file. index, x value, y value, z value
+					infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+					
+					//add point to timeline
+					uint16_t arr_index = data.index;
+					
+					bool pos_exists = false;
+					if(data.position_exist == 1){pos_exists = true;}
+					timeline_plots_position[i].timeline_settings_bool_array[arr_index] = pos_exists;				
+					
+					timeline_plots_position[i].timeline_points_posx[arr_index] = data.x;
+					timeline_plots_position[i].timeline_points_posy[arr_index] = data.y;
+					timeline_plots_position[i].timeline_points_posz[arr_index] = data.z;
+					
+					//add marker to timeline
+					bool playback_marker_exists = false;
+					if(data.playback_marker_exist == 1){playback_marker_exists = true;}
+					timeline_plots_playback_markers[i].timeline_settings_bool_array[arr_index] = playback_marker_exists;
+					
+					timeline_plots_playback_markers[i].timeline_playback_markers[arr_index] = (PlaybackMarkerType)(data.playback_marker_type);
+				}
+			}
+			//if system is big endian, convert little endian binary data to big endian
+			else
+			{
+				//while have not reached end of file
+				while( !infile.eof())
+				{
+					
+					TimeFramePositionPlaybackData data;
+					
+					//read point from file. index, x value, y value, z value
+					infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+					
+					//add point to timeline
+					uint16_t arr_index = ReverseInt_16bit(data.index);
+					
+					bool pos_exists = false;
+					if(data.position_exist == 1){pos_exists = true;}
+					timeline_plots_position[i].timeline_settings_bool_array[arr_index] = pos_exists;				
+					
+					timeline_plots_position[i].timeline_points_posx[arr_index] = ReverseFloat(data.x);
+					timeline_plots_position[i].timeline_points_posy[arr_index] = ReverseFloat(data.y);
+					timeline_plots_position[i].timeline_points_posz[arr_index] = ReverseFloat(data.z);
+					
+					//add marker to timeline
+					bool playback_marker_exists = false;
+					if(data.playback_marker_exist == 1){playback_marker_exists = true;}
+					timeline_plots_playback_markers[i].timeline_settings_bool_array[arr_index] = playback_marker_exists;
+					
+					timeline_plots_playback_markers[i].timeline_playback_markers[arr_index] = (PlaybackMarkerType)(data.playback_marker_type);
+				}
+			}
+				
+			//close file
+			infile.close();
+		}
+		
+	}
+	
+	//change editor variables to match the newly loaded position
+	edit_obj_listview_activeIndex = timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit;
+	Timeline::InitGUI();
+}
+
+TimelineSaveData& Timeline::GetSaveData(){return m_save_data;}
+
+//saves timeline points to file
+void Timeline::SaveTimeFramesToFile(std::string& filepath)
+{
+	//open file for writing 
+	std::ofstream outfile (filepath,std::ofstream::binary | std::ofstream::out);
+	
+	if(!outfile)
+	{
+		std::cout << "Unable to open file for writing: " << filepath << std::endl;
+	}
+	
+	size_t edit_index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+	
+	//check if system is big endian
+	bool systemIsBigEndian = IsSystemBigEndian();
+	
+	//for current selected timeline
+	
+	//if system is not big endian
+	if(!systemIsBigEndian)
+	{
+		//write timeline points to file
+		for(uint16_t i = 0; i < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; i++)
+		{
+			
+			//if there is no timeline position point nor playback marker added
+			if(!timeline_plots_position[edit_index].timeline_settings_bool_array[i] &&
+				!timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i])
+			{
+				continue; //skip to next iteration
+			}
+			
+			TimeFramePositionPlaybackData data;
+			data.index = i;
+			
+			//if there is a position point added, add it to the file
+			if(timeline_plots_position[edit_index].timeline_settings_bool_array[i])
+			{
+				data.position_exist = 1;
+				
+				data.x = timeline_plots_position[edit_index].timeline_points_posx[i];
+				data.y = timeline_plots_position[edit_index].timeline_points_posy[i];
+				data.z = timeline_plots_position[edit_index].timeline_points_posz[i];
+				
+			}
+			else
+			{
+				data.position_exist = 0;
+				
+				data.x = 0;
+				data.y = 0;
+				data.z = 0;
+			}
+			
+			//if there is a playback marker added, add it to the file
+			if(timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i])
+			{
+				data.playback_marker_exist = 1;
+				
+				data.playback_marker_type = static_cast<int>(timeline_plots_playback_markers[edit_index].timeline_playback_markers[i]);
+			}
+			else
+			{
+				data.playback_marker_exist = 0;
+				
+				data.playback_marker_type = static_cast<int>(PlaybackMarkerType::NONE);
+			}
+			
+			//write data
+			outfile.write( reinterpret_cast <const char*>( &data) ,sizeof(data));
+			
+		}
+	}
+	//if system is big endian, convert data to little endian
+	else
+	{
+		//write timeline points to file
+		for(uint16_t i = 0; i < MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT; i++)
+		{
+			
+			//if there is no timeline position point nor playback marker added
+			if(!timeline_plots_position[edit_index].timeline_settings_bool_array[i] &&
+				!timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i])
+			{
+				continue; //skip to next iteration
+			}
+			
+			TimeFramePositionPlaybackData data;
+			data.index = ReverseInt_16bit(i);
+			
+			//if there is a position point added, add it to the file
+			if(timeline_plots_position[edit_index].timeline_settings_bool_array[i])
+			{
+				data.position_exist = 1;
+				
+				data.x = ReverseFloat(timeline_plots_position[edit_index].timeline_points_posx[i]);
+				data.y = ReverseFloat(timeline_plots_position[edit_index].timeline_points_posy[i]);
+				data.z = ReverseFloat(timeline_plots_position[edit_index].timeline_points_posz[i]);
+				
+			}
+			else
+			{
+				data.position_exist = 0;
+				
+				data.x = 0;
+				data.y = 0;
+				data.z = 0;
+			}
+			
+			//if there is a playback marker added, add it to the file
+			if(timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i])
+			{
+				data.playback_marker_exist = 1;
+				
+				data.playback_marker_type = static_cast<int>(timeline_plots_playback_markers[edit_index].timeline_playback_markers[i]);
+			}
+			else
+			{
+				data.playback_marker_exist = 0;
+				
+				data.playback_marker_type = static_cast<int>(PlaybackMarkerType::NONE);
+			}
+			
+			//write data
+			outfile.write( reinterpret_cast <const char*>( &data) ,sizeof(data));
+			
+		}
+	}
+	
+			
+	//close file
+	outfile.close();
+	
+}
+	
+//loads timeline points from file
+void Timeline::LoadTimeFramesFromFile(std::string& filepath)
+{
+	
+	//open file for reading
+	std::ifstream infile (filepath,std::ifstream::binary | std::ifstream::in);
+	
+	if(!infile)
+	{
+		std::cout << "Unable to open file for reading: " << filepath << std::endl;
+	}
+	
+	//for current selected timeline
+	size_t edit_index = static_cast <size_t> (edit_timeline_listview_activeIndex);
+	
+	//check if system is big endian
+	bool systemIsBigEndian = IsSystemBigEndian();
+	
+	//if system is not big endian, assuming little endian
+	if(!systemIsBigEndian)
+	{
+		//while have not reached end of file
+		while( !infile.eof())
+		{
+			TimeFramePositionPlaybackData data;
+			
+			//read point from file. index, x value, y value, z value
+			infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+			
+			//add point to timeline
+			uint16_t i = data.index;
+			
+			bool pos_exists = false;
+			if(data.position_exist){pos_exists = true;}
+			timeline_plots_position[edit_index].timeline_settings_bool_array[i] = pos_exists;
+			
+			timeline_plots_position[edit_index].timeline_points_posx[i] = data.x;
+			timeline_plots_position[edit_index].timeline_points_posy[i] = data.y;
+			timeline_plots_position[edit_index].timeline_points_posz[i] = data.z;
+			
+			bool pm_exists = false;
+			if(data.playback_marker_exist){pm_exists = true;}
+			
+			timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i] = pm_exists;
+			timeline_plots_playback_markers[edit_index].timeline_playback_markers[i] = (PlaybackMarkerType)(data.playback_marker_type);
+			
+		}
+	}
+	//else if system is big endian, convert little endian binary data to big endian
+	else
+	{
+		//while have not reached end of file
+		while( !infile.eof())
+		{
+			TimeFramePositionPlaybackData data;
+			
+			//read point from file. index, x value, y value, z value
+			infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+			
+			//add point to timeline
+			uint16_t i = ReverseInt_16bit(data.index);
+			
+			bool pos_exists = false;
+			if(data.position_exist){pos_exists = true;}
+			timeline_plots_position[edit_index].timeline_settings_bool_array[i] = pos_exists;
+			
+			timeline_plots_position[edit_index].timeline_points_posx[i] = ReverseFloat(data.x);
+			timeline_plots_position[edit_index].timeline_points_posy[i] = ReverseFloat(data.y);
+			timeline_plots_position[edit_index].timeline_points_posz[i] = ReverseFloat(data.z);
+			
+			bool pm_exists = false;
+			if(data.playback_marker_exist){pm_exists = true;}
+			
+			timeline_plots_playback_markers[edit_index].timeline_settings_bool_array[i] = pm_exists;
+			timeline_plots_playback_markers[edit_index].timeline_playback_markers[i] = (PlaybackMarkerType)(data.playback_marker_type);
+			
+		}
+	} 
+		
+	//close file
+	infile.close();
+}
+
+void Timeline::ToggleShowTimelineParameterPropertiesBoxBool()
+{
+	showTimelineParameterPropertiesBox = !showTimelineParameterPropertiesBox;
+}
+
+void Timeline::HandleInput()
+{
+	if( IsKeyPressed(KEY_LEFT) )
+	{
+		//decrement frame
+		if(timelineSettings.current_timeline_frame > 0)
+		{
+			timelineSettings.current_timeline_frame--;
+		}
+		
+		timelineSettings.mouse_control = false;
+	}
+	else if( IsKeyPressed(KEY_RIGHT) )
+	{
+		//increment frame
+		timelineSettings.current_timeline_frame++;
+		timelineSettings.mouse_control = false;
+	}
+	
+	if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+	{
+		timelineSettings.mouse_control = true;
+	}
+	
+	if(IsKeyPressed(KEY_ENTER))
+	{
+		timelineSettings.frameSelected = !timelineSettings.frameSelected;
+	}
+}
+
+size_t Timeline::GetCurrentTimelineFrame(){return timelineSettings.current_timeline_frame;}
+
+void Timeline::SetCurrentTimelineFrameAtPause()
+{
+	timelineSettings.mouse_control = false;
+	timelineSettings.frameSelected = false;	
+}
+
+void Timeline::ResetCurrentTimelineFrameToZero()
+{
+	timelineSettings.mouse_control = false;
+	timelineSettings.frameSelected = false;
+	
+	timelineSettings.current_timeline_frame = 0;
+}
+
+void Timeline::InitDataDirectory(std::string filepath)
+{
+	m_data_dir_path = filepath;
+}

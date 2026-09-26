@@ -1,0 +1,27 @@
+# build artifacts
+build/
+release/
+debug/
+app_image_build/
+
+# vendored third-party trees (install system libs instead — see README)
+openal-soft/
+raylib-*/
+boost*/
+
+# audio output
+*.wav
+*.flac
+*.ogg
+*.mp3
+
+# UI style assets (optional themes — see README)
+data/
+
+# editor / os junk
+imgui.ini
+.DS_Store
+*.swp
+
+# CI leftovers
+.travis.yml
