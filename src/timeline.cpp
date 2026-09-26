@@ -33,6 +33,10 @@ static TimelineParameterSettings_ImGui positionTimelineSettings = InitTimelinePa
 static TimelineParameterSettings_ImGui playbackMarkerTimelineSettings = InitTimelineParameterSettings_ImGui(max_num_frames,nullptr,param_timeline_x,playback_param_timeline_y,
 																								&timeline_leftmost_frame,&timeline_rightmost_frame,max_num_frames_to_display);
 
+//selected plot in the timeline dropdown list view (declared early so
+//AddPlotPositionToTimeline can reset it when a fresh plot is added)
+static int edit_timeline_listview_activeIndex = 0;
+
 bool IsFileBin(std::string filename)
 {
 	if(filename.length() < 4){return false;}
@@ -235,7 +239,6 @@ static bool addTimeline = false;
 static char textInput[32] = { 0 };
 
 //dropdown list view for timeline being edited
-static int edit_timeline_listview_activeIndex = 0;
 static std::vector <std::string> timeline_choices_vec;
 static bool timeline_choice_changed = false;
 
