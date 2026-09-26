@@ -100,7 +100,8 @@ MainGuiEditor::~MainGuiEditor()
 {
     
     //close listener reverb thread here
-	effects_manager_ptr->FreeEffects();
+    //(guard: OnInit can fail before the effects manager is created)
+	if(effects_manager_ptr != nullptr){ effects_manager_ptr->FreeEffects(); }
 	
 }
 

@@ -65,6 +65,14 @@ void EditListenerDialog::DrawDialog()
 		
 		ImGui::Separator();
 		
+		//explicitly show the toggleable listener behaviours so OK always applies
+		//exactly what the user sees -- and never wipes the external-orientation
+		//flag with a stale hidden value
+		ImGui::Checkbox("Free roam", &editlt_tempFreeRoamBool);
+		ImGui::Checkbox("External orientation device", &editlt_extOrientationBool);
+		
+		ImGui::Separator();
+		
 		//display OK and Cancel button on the same lines
 		if (ImGui::Button("OK", ImVec2(120, 0))) 
 		{ 

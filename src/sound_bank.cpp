@@ -163,7 +163,7 @@ bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inpu
 {
 	//The code taken from example code in dr_wav.h uses a version of the API that 
 	//converts the audio data to a consistent format 
-	//(32-bit signed PCM, in this case)
+	//(32-bit float PCM, in this case)
 
 	//read data
 	
@@ -177,14 +177,28 @@ bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inpu
         std::cout << "Error! Could not open input file " << inputSoundFilePath << " in sound bank.\n"; 
         return false;
     }
+    
+    //guard against malformed/crafted headers: reject unsupported channel counts,
+    //implausible sample rates, and frame counts too large to copy into RAM
+    if(channels == 0 || channels > MAX_CHANNELS ||
+       sampleRate < 8000 || sampleRate > 192000 ||
+       totalPCMFrameCount > 200000000ULL)
+    {
+        std::cout << "Rejected audio file (unsupported format): ch=" << channels
+                  << " rate=" << sampleRate << " frames=" << totalPCMFrameCount << "\n";
+        drwav_free(pSampleData, NULL);
+        return false;
+    }
 
     audio_data_ptr->channels = channels;
     audio_data_ptr->sampleRate = sampleRate;
     audio_data_ptr->total_frames = totalPCMFrameCount;
     
     //copy audio samples to vector
-    audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames);
-    for(drwav_uint64 i = 0; i < totalPCMFrameCount; i++)
+    //keep the decoded interleaved samples (frames x channels) so the
+    //stream-file writer can emit correct multi-channel WAV data
+    audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames * audio_data_ptr->channels);
+    for(drwav_uint64 i = 0; i < totalPCMFrameCount * channels; i++)
     {
 		audio_data_ptr->audio_samples[i] = pSampleData[i];
 	}
@@ -207,7 +221,18 @@ bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inp
         // Failed to open and decode FLAC file.
         return false;
     }
-    
+
+    //guard against malformed/crafted headers (same policy as the WAV reader)
+    if(channels == 0 || channels > MAX_CHANNELS ||
+       sampleRate < 8000 || sampleRate > 192000 ||
+       totalPCMFrameCount > 200000000ULL)
+    {
+        std::cout << "Rejected audio file (unsupported format): ch=" << channels
+                  << " rate=" << sampleRate << " frames=" << totalPCMFrameCount << "\n";
+        drflac_free(pSampleData, NULL);
+        return false;
+    }
+
     audio_data_ptr->channels = channels;
     audio_data_ptr->sampleRate = sampleRate;
     audio_data_ptr->total_frames = totalPCMFrameCount;
@@ -215,8 +240,9 @@ bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inp
     
 
     //copy audio samples to vector
-    audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames);
-    for(drflac_uint64 i = 0; i < totalPCMFrameCount; i++)
+    //keep the decoded interleaved samples (frames x channels)
+    audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames * audio_data_ptr->channels);
+    for(drflac_uint64 i = 0; i < totalPCMFrameCount * channels; i++)
     {
 		audio_data_ptr->audio_samples[i] = pSampleData[i];
 	}
@@ -227,6 +253,10 @@ bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inp
 }
 
 bool WriteAudioDataToWAVFile(AudioData* audio_data_ptr,std::string outputSoundFilePath){
+	
+	//guard: a failed read leaves a zeroed AudioData; don't overwrite a
+	//previously working stream file with a 0-channel WAV
+	if(audio_data_ptr->channels == 0 || audio_data_ptr->sampleRate == 0){return false;}
 	
 	//initialize wav format
 	drwav_data_format format;
@@ -266,8 +296,10 @@ bool WriteAudioDataToWAVFile(AudioData* audio_data_ptr,std::string outputSoundFi
     
 	
 	//write to output file
-	drflac_int32* pSampleData = (drflac_int32*)audio_data_ptr->audio_samples.data();
-	uint64_t sample_count = audio_data_ptr->total_frames;
+	//the samples are already interleaved f32 (frames x channels);
+	//write the frame count that matches the stored buffer exactly
+	float* pSampleData = audio_data_ptr->audio_samples.data();
+	uint64_t sample_count = audio_data_ptr->total_frames * audio_data_ptr->channels;
     
     drwav_write_pcm_frames(&wav, sample_count, pSampleData);
     
@@ -285,6 +317,16 @@ void SoundBank::LoadAudioDataFromFileToAccount(std::string filepath,std::uint8_t
 	std::cout << "Input Sound file path:" << filepath << std::endl;
 	
 	std::cout << "Stream sound file path: " << m_sound_accounts[account_num].stream_file_path << std::endl;
+	
+	//reject paths too short to hold a .wav/.flac extension
+	//(std::string::substr would throw std::out_of_range on those)
+	if(filepath.size() < 5)
+	{
+		std::cout << "Error unsupported file type in audio file " << filepath <<
+		". Supported filetypes are .wav , .flac \n";
+		m_sound_accounts[account_num].active = false;
+		return;
+	}
 	
 	bool readDone = false;
 	bool writeDone = false;
@@ -305,7 +347,12 @@ void SoundBank::LoadAudioDataFromFileToAccount(std::string filepath,std::uint8_t
 		". Supported filetypes are .wav , .flac \n";
 	}
 	
-	writeDone = WriteAudioDataToWAVFile(&audio_data,m_sound_accounts[account_num].stream_file_path);
+	//only touch the account stream file when the source actually decoded;
+	//a failed read must not overwrite a previously working stream with garbage
+	if(readDone)
+	{
+		writeDone = WriteAudioDataToWAVFile(&audio_data,m_sound_accounts[account_num].stream_file_path);
+	}
 										
 	m_sound_accounts[account_num].active = readDone && writeDone;
 	

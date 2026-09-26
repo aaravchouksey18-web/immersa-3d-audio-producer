@@ -918,22 +918,27 @@ static PlaybackMarkerTraveler playback_marker_traveler;
 void Timeline::SolveAudioPlaybackInTimeline(ImmediateModeSoundPlayer* im_sound_player_ptr)
 {
 	
+	//clamp any externally set frame value into the plot arrays (same policy as
+	//RunPlaybackWithTimeline); a corrupt or stale setting must not index OOB
+	if(timelineSettings.current_timeline_frame >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+	{
+		timelineSettings.current_timeline_frame = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
+	}
+	
 	float progressValue = 0.0f;
 	
-	float progressValueIncrement = 1 / timeline_plots_playback_markers.size();
+	//guard against an empty marker list (prevents integer division by zero)
+	float progressValueIncrement = timeline_plots_playback_markers.size() > 0
+		? 1.0f / static_cast<float>(timeline_plots_playback_markers.size()) : 0.0f;
 	
 	//for every audio playback marker plot
 	for(size_t i = 0; i < timeline_plots_playback_markers.size(); i++)
 	{
-		//if object edited by playback marker plot is not a sound producer , skip
-		bool is_sound_producer = false;
-		
-		//skip playback marker plot if not sound producer
-		if(timeline_plots_playback_markers[i].indexObjectToEdit >= 2 && timeline_plots_playback_markers[i].indexObjectToEdit - 2 < sound_producer_vector_ref->size())
-		{
-			is_sound_producer = true;
-			if(!is_sound_producer){continue;}
-		}
+		//skip playback marker plot when it is not a sound producer
+		//(indexObjectToEdit == 1 is the listener; 0 means no object was assigned)
+		if(timeline_plots_playback_markers[i].indexObjectToEdit < 2){continue;}
+		int buffer_player_index = timeline_plots_playback_markers[i].indexObjectToEdit - 2;
+		if(buffer_player_index >= static_cast<int>(sound_producer_vector_ref->size())){continue;}
 		
 		//check from zero to current timeline frame
 		for(size_t it_frame = 0; it_frame < timelineSettings.current_timeline_frame; it_frame++)
@@ -952,7 +957,6 @@ void Timeline::SolveAudioPlaybackInTimeline(ImmediateModeSoundPlayer* im_sound_p
 		//if time recorded in playback marker is not zero
 		if(playback_marker_traveler.GetCurrentTime() > 0.0f)
 		{
-			int buffer_player_index = timeline_plots_playback_markers[i].indexObjectToEdit - 2;
 			double& current_time = playback_marker_traveler.GetCurrentTime();
 			
 			//forward audio playback of sound producer
@@ -997,6 +1001,12 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 	//set edit mode to false so that no editing happens during playback which can lead to errors
 	timelineSettings.editMode = false;
 	
+	//clamp any externally set frame value into the plot arrays so a corrupt or
+	//stale timeline setting can never index out of bounds during playback
+	if(timelineSettings.current_timeline_frame >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+	{
+		timelineSettings.current_timeline_frame = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
+	}
 	
 	//increment timeline frame assuming constant 60 frames per second
 	//increment number of frames based on time frame rate which is number of frames per second
@@ -1011,6 +1021,11 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 	{
 		
 		timelineSettings.current_timeline_frame++;
+		//hold at the last valid frame instead of running past the arrays
+		if(timelineSettings.current_timeline_frame >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+		{
+			timelineSettings.current_timeline_frame = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
+		}
 		second_frame_count = 0;
 		
 		
@@ -1058,8 +1073,9 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 			//if object edited is sound producer
 			if(timeline_plots_playback_markers[i].indexObjectToEdit >= 2 && timeline_plots_playback_markers[i].indexObjectToEdit - 2 < sound_producer_vector_ref->size())
 			{
-				//buffer player index is linked to sound producer in im sound player
-				int buffer_player_index = timeline_plots_position[i].indexObjectToEdit - 2;
+				//buffer player index is linked to sound producer in im sound player;
+				//derive it from the marker plot (the positions plot was the wrong source)
+				int buffer_player_index = timeline_plots_playback_markers[i].indexObjectToEdit - 2;
 				
 				switch(timeline_plots_playback_markers[i].timeline_playback_markers[timelineSettings.current_timeline_frame])
 				{
@@ -1192,7 +1208,8 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 			//if system is not big endian, assuming this is little endian
 			if(!systemIsBigEndian)
 			{
-				//while have not reached end of file
+				//read records until the file is exhausted; check the read result,
+				//not eof(), so a trailing partial record is never treated as data
 				while( !infile.eof())
 				{
 					
@@ -1200,9 +1217,18 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 					
 					//read point from file. index, x value, y value, z value
 					infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+					if(!infile){break;}
 					
 					//add point to timeline
 					uint16_t arr_index = data.index;
+					
+					//range-check the frame index into the plot arrays; a corrupt or
+					//crafted file must never write out of bounds
+					if(arr_index >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+					{
+						std::cout << "Skipping out-of-range timeline frame index " << arr_index << "\n";
+						continue;
+					}
 					
 					bool pos_exists = false;
 					if(data.position_exist == 1){pos_exists = true;}
@@ -1223,7 +1249,8 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 			//if system is big endian, convert little endian binary data to big endian
 			else
 			{
-				//while have not reached end of file
+				//read records until the file is exhausted; check the read result,
+				//not eof(), so a trailing partial record is never treated as data
 				while( !infile.eof())
 				{
 					
@@ -1231,9 +1258,18 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 					
 					//read point from file. index, x value, y value, z value
 					infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+					if(!infile){break;}
 					
 					//add point to timeline
 					uint16_t arr_index = ReverseInt_16bit(data.index);
+					
+					//range-check the frame index into the plot arrays; a corrupt or
+					//crafted file must never write out of bounds
+					if(arr_index >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT)
+					{
+						std::cout << "Skipping out-of-range timeline frame index " << arr_index << "\n";
+						continue;
+					}
 					
 					bool pos_exists = false;
 					if(data.position_exist == 1){pos_exists = true;}

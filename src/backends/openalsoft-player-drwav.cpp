@@ -37,17 +37,31 @@ OpenALSoftPlayer_DRWAV::OpenALSoftPlayer_DRWAV()
     bit_size = 0;
     buffer_size = 0;
     buffer_index = 0;
+
+    // Zero the OpenAL buffer handles and the dr_wav object so the destructor
+    // is safe even if InitBuffersForStreaming()/OpenPlayerFile() never ran.
+    memset(buffers, 0, sizeof(buffers));
+    memset(&inputfile_wav, 0, sizeof(inputfile_wav));
 }
 
 OpenALSoftPlayer_DRWAV::~OpenALSoftPlayer_DRWAV()
 {
 	ClosePlayerFile();
 
-    alDeleteBuffers(NUM_BUFFERS, buffers);
-    if(alGetError() != AL_NO_ERROR)
+    // Only delete OpenAL buffers that were actually generated.
+    bool buffers_created = false;
+    for(int i = 0; i < NUM_BUFFERS; i++)
     {
+        if(buffers[i] != 0){buffers_created = true; break;}
+    }
+    if(buffers_created)
+    {
+        alDeleteBuffers(NUM_BUFFERS, buffers);
+        if(alGetError() != AL_NO_ERROR)
+        {
 		fprintf(stderr, "Failed to delete object buffer IDs\n");
 	}
+    }
 	
 	
 	buffer_size = 0;
@@ -123,7 +137,6 @@ void OpenALSoftPlayer_DRWAV::CloseOpenALSoft(ALCdevice* thisAudioDevice, ALCcont
 
 int OpenALSoftPlayer_DRWAV::OpenPlayerFile(const char *filename)
 {
-	uint32_t frame_size;
 
 	OpenALSoftPlayer_DRWAV::ClosePlayerFile();
 
@@ -189,10 +202,9 @@ int OpenALSoftPlayer_DRWAV::OpenPlayerFile(const char *filename)
 	//set audio bit size to 32-bit float
 	bit_size = sizeof(float);
 
-	frame_size = inputfile_wav.channels * bit_size;
-
-	/* Set the buffer size, given the desired millisecond length. */
-	buffer_size = sample_rate * SMALL_BUFFER_SIZE * frame_size;
+	/* Set the buffer size (in PCM frames) for the desired millisecond length. */
+	buffer_size = static_cast<uint32_t>(sample_rate) * BUFFER_TIME_MS / 1000u;
+	if(buffer_size == 0){buffer_size = 1;}
 
 	#ifdef DEBUG_PLAYER
 	std::cout << "buffer size:" << buffer_size << std::endl;
@@ -243,20 +255,14 @@ int OpenALSoftPlayer_DRWAV::StartPlayerBuffering(ALuint* source, double& current
 		//if data is 32-bit float
 		if(bit_size == 4)
 		{
-			std::vector<float> data;
-			data.resize(buffer_size);
+			//interleaved float frames: one float per channel per frame
+			std::vector<float> data(static_cast<size_t>(buffer_size) * inputfile_wav.channels);
 			
 			//read 1 chunk of data, save it to data buffer
 			uint64_t pcmFrameCount_drwav = drwav_read_pcm_frames_f32(&inputfile_wav, buffer_size, data.data());
 
-			int slen = data.size() * sizeof(float); //get size of data in bytes
-			
-			#ifdef DEBUG_PLAYER
-			std::cout << "StartPlayerBuffering, number of samples in data buffer : " << slen << "\n";
-			#endif
-			
-			//if sample buffer is null or size of buffer data is zero, notify of error
-			if(slen == 0)
+			//if no frames were read, there is no more audio in the file
+			if(pcmFrameCount_drwav == 0)
 			{
 				std::cout << "Failed to read anymore audio from file. Sample length is 0! \n";
 				break;
@@ -264,8 +270,9 @@ int OpenALSoftPlayer_DRWAV::StartPlayerBuffering(ALuint* source, double& current
 
 			// Buffer the audio data into buffer array
 		
-			//set buffer data
-			alBufferData(buffers[buffer_index], al_format, &data.front(), slen, inputfile_wav.sampleRate);
+			//set buffer data (byte count from what was actually read)
+			ALsizei data_bytes = static_cast<ALsizei>(pcmFrameCount_drwav * inputfile_wav.channels * sizeof(float));
+			alBufferData(buffers[buffer_index], al_format, data.data(), data_bytes, inputfile_wav.sampleRate);
 		}
 		
         
@@ -328,7 +335,6 @@ int OpenALSoftPlayer_DRWAV::UpdatePlayerBuffer(ALuint* source,double& current_ti
     while(processed > 0)
     {
         ALuint bufid;
-        uint32_t slen;
 
         alSourceUnqueueBuffers(*source, 1, &bufid);
         processed--;
@@ -343,22 +349,18 @@ int OpenALSoftPlayer_DRWAV::UpdatePlayerBuffer(ALuint* source,double& current_ti
 			 //if 32-bit float
 			 case 4:
 			 {
-				//setup data for buffer
-				std::vector<float> data;
-				data.resize(buffer_size);
+				//setup data for buffer (interleaved float frames: one float per channel per frame)
+				std::vector<float> data(static_cast<size_t>(buffer_size) * inputfile_wav.channels);
 				
 				//read 1 chunk of data, save it to data buffer
 				uint64_t pcmFrameCount_drwav = drwav_read_pcm_frames_f32(&inputfile_wav, buffer_size, data.data());
 				
-				slen = data.size() * sizeof(float); //get size of data in bytes
-				
 				#ifdef DEBUG_PLAYER
 				std::cout << "Number of pcm frames read: " << pcmFrameCount_drwav << "\n";
-				std::cout << "Size of data in bytes: " << slen << "\n";
 				#endif
 				
-				//if sample buffer is null or size of buffer data is zero, notify of error
-				if(slen == 0)
+				//if no frames were read, there is no more audio in the file
+				if(pcmFrameCount_drwav == 0)
 				{
 					#ifdef DEBUG_PLAYER
 					std::cout << "Failed to read audio from file.\n";
@@ -372,11 +374,10 @@ int OpenALSoftPlayer_DRWAV::UpdatePlayerBuffer(ALuint* source,double& current_ti
 				std::cout << "Duration of sound:" << seconds << "s. \n";
 				#endif
 				
-				if(slen > 0)
-				{
-					alBufferData(bufid, al_format, &data.front(), slen, inputfile_wav.sampleRate);
-					alSourceQueueBuffers(*source, 1, &bufid);
-				}
+				//byte count from what was actually read
+				ALsizei data_bytes = static_cast<ALsizei>(pcmFrameCount_drwav * inputfile_wav.channels * sizeof(float));
+				alBufferData(bufid, al_format, data.data(), data_bytes, inputfile_wav.sampleRate);
+				alSourceQueueBuffers(*source, 1, &bufid);
 				if(alGetError() != AL_NO_ERROR)
 				{
 					fprintf(stderr, "Error buffering data\n");

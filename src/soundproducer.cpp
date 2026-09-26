@@ -19,6 +19,9 @@ SoundProducer::SoundProducer()
 	account_number = 0;
 	
 	effect_applied = false;
+	
+	//initialize the OpenAL source handle so the destructor never deletes a garbage handle
+	m_source = 0;
 }
 
 SoundProducer::~SoundProducer()

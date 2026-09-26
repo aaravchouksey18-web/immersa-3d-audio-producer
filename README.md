@@ -21,13 +21,15 @@ multichannel panning.
 - **Timeline editor** with playback markers (start / pause / resume / end)
   and per-timeline playback of a single selected object
 - **Sound bank** for assigning audio files to producers — the app keeps its
-  own copy of the audio data as signed 32-bit samples to avoid corrupting
+  own copy of the audio data as 32-bit float samples to avoid corrupting
   your source files
 - **Effect zones** — Echo, Standard Reverb, and EAX Reverb, creatable and
   editable in GUI dialogs
 - **HRTF** change & test dialogs
-- **External orientation device** — control the listener's orientation with
-  an Adafruit BNO055 IMU over serial (`docs/external-orientation-imu.md`)
+- **External orientation device (optional)** — flag a listener as driven by
+  an external device and persist that choice with the project. The serial
+  driver that reads an Adafruit BNO055 IMU is kept in the repo but is **not
+  part of the default build** (`docs/external-orientation-imu.md`)
 - **Project management** — projects save and load audio + timeline data from
   a folder the app extracts automatically, so sharing a project is as simple
   as zipping that folder
@@ -44,8 +46,6 @@ The UI ships with the built-in default raygui look. Additional themes
 
 - [OpenAL Soft](https://github.com/kcat/openal-soft)
 - [raylib](https://github.com/raysan5/raylib) **4.2**
-- Boost (Math Quaternion headers + ASIO serial) —
-  [Boost 1.70](https://www.boost.org/users/history/version_1_70_0.html)
 - [PugiXML](https://github.com/zeux/pugixml/)
 - A C++17 compiler
 
@@ -62,9 +62,9 @@ make
 ./3d-audio-producer
 ```
 
-The repo intentionally does **not** vendor raylib / OpenAL Soft / Boost /
-PugiXML or their build trees — install them first (above), then `cmake ..`
-will pick them up. UI style assets (`data/styles`) are also not shipped;
+The repo intentionally does **not** vendor raylib / OpenAL Soft / PugiXML
+or their build trees — install them first (above), then `cmake ..` will
+pick them up. UI style assets (`data/styles`) are also not shipped;
 create projects with the built-in default look or drop themes in from the
 raygui style gallery.
 
@@ -131,8 +131,24 @@ the output in `alsoft-config` (ships with OpenAL Soft) and see the
 
 ## IMU orientation control
 
-Listener orientation can be driven by a physical Adafruit BNO055 IMU —
-see [`docs/external-orientation-imu.md`](docs/external-orientation-imu.md).
+Optional: a listener can be flagged as driven by an external orientation
+device. The IMU serial driver itself (BNO055 / Boost-based) is kept in the
+repo but is not compiled into the default build, so the flag is persisted
+with the project rather than actually driving orientation in this build.
+See [`docs/external-orientation-imu.md`](docs/external-orientation-imu.md).
+
+## Documentation
+
+- `docs/overview-of-systems.md` — architecture overview (GUI, sound bank,
+  immediate-mode sound player, OpenAL Soft engine)
+- `docs/external-orientation-imu.md` — optional Adafruit BNO055 IMU add-on
+- PDF reference sheets for the echo / standard-reverb / EAX-reverb dialogs
+  (also under `docs/`)
+
+> **Legacy:** `docs/3d-audio-producer-manual-v3p00.pdf` documents the old
+> v3.0.0 release (wxWidgets / OpenSceneGraph era). It is kept for reference
+> only — project files from v3.0.0 or earlier do not load in the current
+> version.
 
 ## Libraries & licenses
 
@@ -143,7 +159,10 @@ see [`docs/external-orientation-imu.md`](docs/external-orientation-imu.md).
 | dr_wav / dr_flac | licence-free (public domain + MIT option) | `src/backends/` |
 | OpenAL Soft | LGPL 2.1 | external dependency |
 | PugiXML | MIT | external dependency |
-| Boost | Boost Software License | external dependency |
+
+No third-party font files are bundled: the UI uses the default font embedded
+in Dear ImGui (`src/backends/imgui/imgui_draw.cpp`, MIT). Older font files
+shipped without license files were removed.
 
 The project itself is under the **BSD 3-Clause** license — see `LICENSE`
 (© 2019, Pablo Antonio Camacho Jr.).

@@ -5,6 +5,12 @@ x = major feature version, used to indicate if major features added or major cha
 y = minor feature version, used to indicate if minor features added or minor changes made
 z = stability version, used to indicate if minor stability improvements were added.
 
+version 5.1.0
+	-Memory-safety fixes in the streaming player, timeline playback and project loading (bounded buffers, guarded indexes, validated audio decode).
+	-Edit Listener dialog now explicitly shows the Free Roam and External Orientation Device toggles.
+	-Build: CMake 3.16+; removed the broken -DDATADIR flag override and the unused Boost dependency.
+	-Docs aligned with the code (IEEE float samples, optional IMU serial driver, legacy v3 manual).
+
 version 5.0.0
 	-Changed GUI backed to Dear IMGUI.
 

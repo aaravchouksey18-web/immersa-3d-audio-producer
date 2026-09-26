@@ -20,10 +20,16 @@ Producer from a physical IMU sensor instead of the mouse/keys.
 
 ## 3D Audio Producer side
 
-1. Start the app, go to **Listener → Setup Serial**.
-2. On Linux, type `/dev/ttyACM0` into the serial-port field and click
-   **Setup**, then **Ok**.
-3. Go to **Listener → Edit Listener**.
-4. Check the **External Device Orientation** box.
-5. The listener orientation is now driven by the physical BNO055 IMU while
-   audio plays through the sound producer track.
+1. Start the app. In the **Object Creation / Edit** panel, choose
+   **Listener** in the *Object Type* list, then press **Edit**.
+2. In the **Edit Listener** dialog, tick the **External Device Orientation**
+   box and press **OK**. The flag is persisted with the project
+   (`docs/overview-of-systems.md` → project management).
+
+> **Status of the driver in this build.** The serial reading code
+> (`listener-external.cpp`, `external-orientation-device-serial.cpp`,
+> `SimpleSerial.h`) and the wxWidgets-era "Setup Serial" dialog are still in
+> the repo but are **not compiled into the default CMake build** (they are
+> the only part that needs Boost). Until they are wired in, the checkbox
+> saves/loads the external-orientation flag but the listener orientation is
+> not yet driven live by the IMU.

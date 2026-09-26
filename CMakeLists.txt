@@ -1,27 +1,22 @@
-cmake_minimum_required(VERSION 3.1.1)
+cmake_minimum_required(VERSION 3.16)
 set (CMAKE_CXX_STANDARD 17)
 set(PROJECT_NAME 3daudio-producer)
 project (${PROJECT_NAME} LANGUAGES C CXX)
-#-DCMAKE_BUILD_TYPE=Release
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -DDATADIR=${DATAPATH} -g -Wall -fPIE")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -DDATADIR=${DATAPATH} -Wall -fPIE")
+# Build-time compiler flags for all build types.
+# (The old version overwrote CMAKE_CXX_FLAGS_{DEBUG,RELEASE} with an
+# undefined -DDATADIR=${DATAPATH}, which defeated the code-local
+# #ifndef DATADIR resource fallbacks - do not reintroduce that.)
+add_compile_options(-Wall -fPIE)
 # Let CMake search for a raylib-config.cmake
-find_package(raylib 3.5 QUIET) 
-#for serial data stuff
-set(BOOST_LIBS date_time system)
-find_package(Boost COMPONENTS ${BOOST_LIBS} REQUIRED)
+find_package(raylib 3.5 QUIET)
 find_package(Threads REQUIRED)
 #Pugi XML parsing
 find_path(pugixml_INCLUDE_DIRS pugixml.hpp)
 #find_library(pugixml_LIBRARIES NAMES pugixml)
 #For the shared library:
-set ( PROJECT_LINK_LIBS  raylib openal ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} -lpugixml)
+set ( PROJECT_LINK_LIBS  raylib openal ${CMAKE_THREAD_LIBS_INIT} -lpugixml)
 #where to find library files .so 
 link_directories( /usr/lib /usr/local/lib ) 
-if (MINGW)
-    # need to link with mingw32 before SDL2
-    list(APPEND linklibraries mingw32)
-endif ()
 if(WIN32)
     set ( PROJECT_LINK_LIBS  ${PROJECT_LINK_LIBS} opengl32 gdi32 winmm)
 endif()
@@ -53,12 +48,7 @@ set(SOURCES src/main.cpp
             src/backends/imgui/imgui_draw.cpp src/backends/imgui/imgui_tables.cpp
             src/backends/imgui/imgui_widgets.cpp
              )
-#get_cmake_property(_variableNames VARIABLES)
-#list (SORT _variableNames)
-#foreach (_variableName ${_variableNames})
-#    message(STATUS "${_variableName}=${${_variableName}}")
-#endforeach()
-#make executable sphere from simple-sphere.cpp 
+#make executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 #link libraries
 target_link_libraries(${PROJECT_NAME} ${PROJECT_LINK_LIBS} ${CMAKE_DL_LIBS} )
