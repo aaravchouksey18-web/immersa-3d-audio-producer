@@ -73,6 +73,16 @@ Timeline::~Timeline()
 {
 	
 	//delete all remaining timeline plot positions 
+	FreePlotPositionBuffers();
+	
+	//delete all remaining timeline plot playback markers
+	FreePlotPlaybackMarkerBuffers();
+	
+}
+
+//free the per-entry heap arrays owned by the plot-position entries
+void Timeline::FreePlotPositionBuffers()
+{
 	while(timeline_plots_position.size() != 0)
 	{
 		delete timeline_plots_position.back().timeline_points_posx;
@@ -81,15 +91,17 @@ Timeline::~Timeline()
 		delete timeline_plots_position.back().timeline_settings_bool_array;
 		timeline_plots_position.pop_back();
 	}
-	
-	//delete all remaining timeline plot playback markers
+}
+
+//free the per-entry heap arrays owned by the playback-marker entries
+void Timeline::FreePlotPlaybackMarkerBuffers()
+{
 	while(timeline_plots_playback_markers.size() != 0)
 	{
 		delete timeline_plots_playback_markers.back().timeline_playback_markers;
 		delete timeline_plots_playback_markers.back().timeline_settings_bool_array;
 		timeline_plots_playback_markers.pop_back();
 	}
-	
 }
 
 void Timeline::Init(std::vector <std::unique_ptr <SoundProducer> > *sound_producer_vector, Listener* listener)
@@ -146,10 +158,12 @@ void Timeline::AddPlotPositionToTimeline(std::string name)
 
 void Timeline::RemovePlotPositionFromTimeline(size_t& index)
 {
+	if(index >= timeline_plots_position.size()){return;}   // defensive
 	//delete points
 	delete timeline_plots_position[index].timeline_points_posx;
 	delete timeline_plots_position[index].timeline_points_posy;
 	delete timeline_plots_position[index].timeline_points_posz;
+	delete timeline_plots_position[index].timeline_settings_bool_array;
 	
 	std::swap(timeline_plots_position[index],timeline_plots_position.back());
 	timeline_plots_position.pop_back();
@@ -176,7 +190,9 @@ void Timeline::AddPlotPlaybackMarkerToTimeline()
 
 void Timeline::RemovePlotPlaybackMarkerFromTimeline(size_t& index)
 {
+	if(index >= timeline_plots_playback_markers.size()){return;}   // defensive
 	delete timeline_plots_playback_markers[index].timeline_playback_markers;
+	delete timeline_plots_playback_markers[index].timeline_settings_bool_array;
 	
 	//switch out to be deleted with empty one at the end of vector, delete at end
 	std::swap(timeline_plots_playback_markers[index],timeline_plots_playback_markers.back());
@@ -276,6 +292,11 @@ void Timeline::DrawGui_Item()
 		
 		DrawTimelinePlotEditorGUI();
 		
+		//an empty plot list has no "current" plot to edit: the frames and
+		//points GUI all index into it, so skip them (the editor above still
+		//offers "Add Timeline" to create the first plot)
+		if(timeline_plots_position.empty()){return;}
+		
 		DrawFramesGUI();
 		
 		DrawFramesFileDialog();
@@ -320,10 +341,21 @@ void Timeline::DrawTimelinePlotEditorGUI()
 	ImGui::Text("Timeline Settings");
 	
 	static int timeline_item_current_idx = 0; // Here we store our selection data as an index.
-	const char* timeline_combo_preview_value = timeline_choices_vec[timeline_item_current_idx].c_str();  // Pass in the preview value visible before opening the combo (it could be anything)
+	
+	//the preview and combo body index into timeline_choices_vec: clamp a
+	//stale static selection and skip the combo entirely when no plots exist
+	int timeline_preview_idx = -1;
+	if(!timeline_choices_vec.empty())
+	{
+		timeline_preview_idx = (timeline_item_current_idx < static_cast<int>(timeline_choices_vec.size()))
+			? timeline_item_current_idx : static_cast<int>(timeline_choices_vec.size() - 1);
+	}
+	const char* timeline_combo_preview_value = (timeline_preview_idx < 0)
+		? "" : timeline_choices_vec[timeline_preview_idx].c_str();
 	static ImGuiComboFlags timeline_obj_flags = 0;
-				
-	if (ImGui::BeginCombo("Timeline", timeline_combo_preview_value, timeline_obj_flags))
+	
+	if (timeline_preview_idx >= 0 &&
+		ImGui::BeginCombo("Timeline", timeline_combo_preview_value, timeline_obj_flags))
 	{
 		for (int n = 0; n < timeline_choices_vec.size(); n++)
 		{
@@ -400,8 +432,8 @@ void Timeline::DrawTimelinePlotEditorGUI()
 		//remove timeline position
 		size_t index = static_cast <size_t> (edit_timeline_listview_activeIndex);
 		
-		//if index is more than 0 or valid
-		if(index)
+		//if index is valid (allows removing the first/default plot too)
+		if(index < timeline_plots_position.size())
 		{
 			Timeline::RemovePlotPositionFromTimeline(index);
 			Timeline::RemovePlotPlaybackMarkerFromTimeline(index);
@@ -411,7 +443,7 @@ void Timeline::DrawTimelinePlotEditorGUI()
 	}
 	
 	//if timeline choice edited has changed
-	if(timeline_choice_changed)
+	if(timeline_choice_changed && edit_timeline_listview_activeIndex >= 0)
 	{
 		timeline_choice_changed = false;
 				
@@ -419,7 +451,7 @@ void Timeline::DrawTimelinePlotEditorGUI()
 	}
 	
 	//if object choice edited by timeline changes													
-	if(obj_choice_changed)
+	if(obj_choice_changed && edit_timeline_listview_activeIndex >= 0)
 	{
 		obj_choice_changed = false;
 		
@@ -1161,8 +1193,10 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 	m_save_data = save_data;
 	
 	//assuming m_save_data has been modified from loading from xml file
-	timeline_plots_position.clear();
-	timeline_plots_playback_markers.clear();
+	//hand the previous project's owned plot arrays back before reloading;
+	//the load loop below allocates fresh arrays for every plot
+	FreePlotPositionBuffers();
+	FreePlotPlaybackMarkerBuffers();
 	
 	timeline_plots_position.resize(save_data.number_of_plots);
 	timeline_plots_playback_markers.resize(save_data.number_of_plots);
@@ -1312,8 +1346,11 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 		
 	}
 	
-	//change editor variables to match the newly loaded position
-	edit_obj_listview_activeIndex = timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit;
+	//change editor variables to match the newly loaded position; the
+	//selected plot may not exist in the new project (index == -1 from
+	//ValidateTimelineListviewIndex when the project has zero plots)
+	edit_obj_listview_activeIndex = (edit_timeline_listview_activeIndex >= 0)
+		? timeline_plots_position[edit_timeline_listview_activeIndex].indexObjectToEdit : -1;
 	Timeline::InitGUI();
 }
 
@@ -1322,6 +1359,7 @@ TimelineSaveData& Timeline::GetSaveData(){return m_save_data;}
 //saves timeline points to file
 void Timeline::SaveTimeFramesToFile(std::string& filepath)
 {
+	if(edit_timeline_listview_activeIndex < 0){return;}   // no selected plot
 	//open file for writing 
 	std::ofstream outfile (filepath,std::ofstream::binary | std::ofstream::out);
 	
@@ -1457,6 +1495,7 @@ void Timeline::SaveTimeFramesToFile(std::string& filepath)
 //loads timeline points from file
 void Timeline::LoadTimeFramesFromFile(std::string& filepath)
 {
+	if(edit_timeline_listview_activeIndex < 0){return;}   // no selected plot
 	
 	//open file for reading
 	std::ifstream infile (filepath,std::ifstream::binary | std::ifstream::in);
@@ -1482,9 +1521,11 @@ void Timeline::LoadTimeFramesFromFile(std::string& filepath)
 			
 			//read point from file. index, x value, y value, z value
 			infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+			if(!infile){break;}   // truncated record: data.index would be garbage
 			
 			//add point to timeline
 			uint16_t i = data.index;
+			if(i >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT){continue;}   // corrupt/crafted index
 			
 			bool pos_exists = false;
 			if(data.position_exist){pos_exists = true;}
@@ -1512,9 +1553,11 @@ void Timeline::LoadTimeFramesFromFile(std::string& filepath)
 			
 			//read point from file. index, x value, y value, z value
 			infile.read(reinterpret_cast <char*>( &data) ,sizeof(data));
+			if(!infile){break;}   // truncated record: data.index would be garbage
 			
 			//add point to timeline
 			uint16_t i = ReverseInt_16bit(data.index);
+			if(i >= MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT){continue;}   // corrupt/crafted index
 			
 			bool pos_exists = false;
 			if(data.position_exist){pos_exists = true;}

@@ -245,6 +245,11 @@ private:
 	
 	//validate the GUI-selected timeline index against the plot arrays
 	void ValidateTimelineListviewIndex();
+	
+	//free the heap arrays owned by plot/playback-marker entries
+	//(destructor, removes, and project reload all hand the buffers back)
+	void FreePlotPositionBuffers();
+	void FreePlotPlaybackMarkerBuffers();
 };
 
 #endif
