@@ -243,6 +243,8 @@ private:
 	
 	void DrawTimelinePoints_ImGUI_version();
 	
+	//validate the GUI-selected timeline index against the plot arrays
+	void ValidateTimelineListviewIndex();
 };
 
 #endif

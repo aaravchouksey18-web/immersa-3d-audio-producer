@@ -22,6 +22,7 @@
 #include "imgui.h"
 #include "backends/rlImGui.h"
 #include "backends/imfilebrowser.h"
+#include "backends/audio-player-parameters.h"
 
 
 //for .flac audio file decoding
@@ -157,7 +158,6 @@ void SoundBank::ChangeSoundNameForAccount(std::uint8_t account_num,std::string n
 std::array <std::string,10> &SoundBank::GetAccountLookupTable(){return account_look_up;}
 
 #define	BUFFER_LEN	1024
-#define	MAX_CHANNELS	2
 
 bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inputSoundFilePath)
 {
@@ -254,8 +254,9 @@ bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inp
 
 bool WriteAudioDataToWAVFile(AudioData* audio_data_ptr,std::string outputSoundFilePath){
 	
-	//guard: a failed read leaves a zeroed AudioData; don't overwrite a
-	//previously working stream file with a 0-channel WAV
+	//guard: AudioData now zero-initializes its scalars (see sound_bank.h);
+	//skip the write so a previously working stream file is never overwritten
+	//with a 0-channel WAV after a failed decode
 	if(audio_data_ptr->channels == 0 || audio_data_ptr->sampleRate == 0){return false;}
 	
 	//initialize wav format
@@ -295,13 +296,17 @@ bool WriteAudioDataToWAVFile(AudioData* audio_data_ptr,std::string outputSoundFi
     }
     
 	
-	//write to output file
-	//the samples are already interleaved f32 (frames x channels);
-	//write the frame count that matches the stored buffer exactly
-	float* pSampleData = audio_data_ptr->audio_samples.data();
-	uint64_t sample_count = audio_data_ptr->total_frames * audio_data_ptr->channels;
-    
-    drwav_write_pcm_frames(&wav, sample_count, pSampleData);
+	//write the interleaved frames to the stream file; drwav_write_pcm_frames
+	//takes a FRAME count (it multiplies by the channel count internally), so
+	//pass the frame count, not the sample count, to avoid over-reading here
+	uint64_t frame_count = audio_data_ptr->total_frames;
+	if(audio_data_ptr->audio_samples.size() < frame_count * audio_data_ptr->channels)
+	{
+		printf("Warning: audio sample buffer shorter than the frame count; aborting write.\n");
+		drwav_uninit(&wav);
+		return false;
+	}
+    drwav_write_pcm_frames(&wav, frame_count, audio_data_ptr->audio_samples.data());
     
     drwav_uninit(&wav);
     

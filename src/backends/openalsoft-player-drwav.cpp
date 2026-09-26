@@ -278,6 +278,13 @@ int OpenALSoftPlayer_DRWAV::StartPlayerBuffering(ALuint* source, double& current
         
     }
     
+    //if no audio frames could be read at all, the source has nothing to play;
+    //report it instead of silently queueing an empty source
+    if(buffer_index == 0)
+    {
+        return PlayerStatus::FAILED_TO_READ_ANYMORE_AUDIO_FROM_FILE;
+    }
+    
     if(alGetError() != AL_NO_ERROR)
     {
         fprintf(stderr, "Error buffering for playback\n");

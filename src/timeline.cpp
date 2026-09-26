@@ -405,6 +405,7 @@ void Timeline::DrawTimelinePlotEditorGUI()
 		{
 			Timeline::RemovePlotPositionFromTimeline(index);
 			Timeline::RemovePlotPlaybackMarkerFromTimeline(index);
+			ValidateTimelineListviewIndex();
 		}
 		
 	}
@@ -1098,6 +1099,20 @@ void Timeline::ResumeEditModeInTimeline()
 	second_frame_count = 0;
 }
 
+void Timeline::ValidateTimelineListviewIndex()
+{
+	//the listview index is a file-scope static that can outlive a project
+	//with fewer plots; keep it inside the plot arrays (or -1 when empty)
+	if(timeline_plots_position.empty())
+	{
+		edit_timeline_listview_activeIndex = -1;
+		return;
+	}
+	int max_index = static_cast<int>(timeline_plots_position.size() - 1);
+	if(edit_timeline_listview_activeIndex < 0){edit_timeline_listview_activeIndex = 0;}
+	else if(edit_timeline_listview_activeIndex > max_index){edit_timeline_listview_activeIndex = max_index;}
+}
+
 //struct
 struct TimeFramePositionPlaybackData{
 	uint16_t index;
@@ -1151,6 +1166,9 @@ void Timeline::LoadSaveData(TimelineSaveData& save_data)
 	
 	timeline_plots_position.resize(save_data.number_of_plots);
 	timeline_plots_playback_markers.resize(save_data.number_of_plots);
+	
+	//the GUI-selected listview index may point at a plot that no longer exists
+	ValidateTimelineListviewIndex();
 	
 	//check if system is big endian
 	bool systemIsBigEndian = IsSystemBigEndian();

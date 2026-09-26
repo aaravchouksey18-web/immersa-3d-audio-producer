@@ -333,6 +333,10 @@ void XMLReader::LoadData_SoundBank(pugi::xml_node& root, SoundBankSaveData& soun
 	//go through each sound producer node
 	for (pugi::xml_node account_node = accountsNodeRoot.first_child(); account_node; account_node = account_node.next_sibling() )
 	{
+		//stop at the storage bound; a project file with more <Account> nodes
+		//than the fixed sound_account_data array must not overflow it
+		if(iterator >= sound_bank_save_data.sound_account_data.size()){ break; }
+		
 		valString = account_node.attribute("name").value(); 
 		sound_bank_save_data.sound_account_data[iterator].name = valString;
 		
