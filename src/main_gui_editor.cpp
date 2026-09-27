@@ -445,8 +445,10 @@ void MainGuiEditor::logic()
 	listener_velocity_y = 0;
 	listener_velocity_z = 0;
 	
-	//move sound producer picked
-	if(soundproducer_picked != -1)
+	//move sound producer picked.
+	//bounds checked as well : a stale index left over from an unload would make
+	//sound_producer_vector.at() throw, and an exception here terminates the app
+	if(soundproducer_picked >= 0 && soundproducer_picked < (int)sound_producer_vector.size())
 	{
 		float newX = sound_producer_vector.at(soundproducer_picked)->GetPositionX() + soundproducer_velocity_x*dt;
 		float newY = sound_producer_vector.at(soundproducer_picked)->GetPositionY() + soundproducer_velocity_y*dt;
@@ -529,7 +531,8 @@ void MainGuiEditor::logic()
 	
 	if(deleteKeyPressed && !sound_player_active)
 	{
-		if(soundproducer_picked != -1)
+		//bounds checked as well : a stale index would read out of bounds
+		if(soundproducer_picked >= 0 && soundproducer_picked < (int)sound_producer_vector.size())
 		{
 			//std::cout << "delete sound producer " << soundproducer_picked << std::endl;
 			std::string sp_name = sound_producer_vector[soundproducer_picked]->GetNameString();
@@ -888,7 +891,10 @@ void MainGuiEditor::draw_object_creation_menu()
 				if(edit_lt_dialog.OkClickedOn() || edit_lt_dialog.CancelClickedOn())
 				{
 					g_state = OurGuiState::NONE;
-					create_sp_dialog.resetConfig();
+					//reset the listener dialog itself : resetting the create sound
+					//producer dialog here left the ok / cancel flags set, so this
+					//dialog reopened already closed
+					edit_lt_dialog.resetConfig();
 					dialogInUse = false;
 				}
 				
@@ -1461,6 +1467,14 @@ void MainGuiEditor::UnloadAll()
 	//remove all sound producers in vector
 	RemoveAllSoundProducersSafely();
 	
+	//drop every effect zone too : zones deleted in the ui would otherwise
+	//survive here and be written by save or leak into the newly opened project
+	effects_manager_ptr->ClearAllZones();
+	
+	//the zone indices no longer refer to anything after the zones are gone
+	effect_zone_picked = -1;
+	effect_zone_type_picked = EffectsManager::EffectZoneType::NONE;
+	
 	//reset sound player 
 	im_sound_player.ResetPlayers_ComplexPlayback();
 }
@@ -1775,6 +1789,10 @@ void MainGuiEditor::RemoveAllSoundProducersSafely()
 	soundproducer_registry.RemoveAllSourcesFromSoundProducerRegistry();
 	
 	sound_producer_vector.clear();
+	
+	//the vector is empty now, so the picked index would be out of range and
+	//later .at(soundproducer_picked) calls would throw std::out_of_range
+	soundproducer_picked = -1;
 }
 
 /*

@@ -8,7 +8,14 @@
 
 EditListenerDialog::EditListenerDialog(const std::string& title)
 {
+	//this dialog is a file-scope static in main_gui_editor.cpp and its
+	//constructor body was empty, so every member below held indeterminate
+	//garbage. SetPointerToListener() is not always reached before DrawDialog()
+	//reads them, so a garbage pointer here meant a wild dereference.
+	ptrListener = nullptr;
 	
+	okClicked = false;
+	cancelClicked = false;
 }
 
 

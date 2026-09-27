@@ -43,6 +43,11 @@ public:
 	//function to free reverb zone effects
 	void FreeEffects();
 	
+	//function to free and remove every effect zone owned by this manager.
+	//used when a project is unloaded, so zones deleted in the ui are not
+	//written to the save file and do not leak into the next session.
+	void ClearAllZones();
+	
 	//function to perform the entire reverb thread operation of checking and setting reverb
 	void PerformEffectThreadOperation();
 	
@@ -96,7 +101,8 @@ private:
 	
 	//function to apply reverb effect of a zone to sound producer track
 	//void ApplyThisEffectZoneEffectToThisTrack(SoundProducerTrack* thisSoundProducerTrack, EffectZone* thisZone);
-	void ApplyThisEffectZoneEffectToThisSource(ALuint* source, EffectZone* thisZone);
+	//returns true only when the zone effect slot was actually bound to the source
+	bool ApplyThisEffectZoneEffectToThisSource(ALuint* source, EffectZone* thisZone);
 	
 	//function to remove effect applied to the sound producer track
 	//void RemoveEffectFromThisTrack(SoundProducerTrack* thisSoundProducerTrack);

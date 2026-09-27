@@ -660,6 +660,9 @@ int OpenALSoftPlayer::PlayUpdatedPlayerBuffer(ALuint* source)
 
 int OpenALSoftPlayer::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint*> *sources_vec)
 {	
+	//nothing to play, and the loops below would dereference an empty vector
+	if(sources_vec->empty()){return PlayerStatus::PLAYBACK_FINISHED;}
+	
 	//vector containing queued status of each source
 	std::vector <ALint> queued_source_vector;
 	queued_source_vector.resize(sources_vec->size());
@@ -698,7 +701,7 @@ int OpenALSoftPlayer::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint*> *so
 			}
 			else
 			{
-				std::cout << "Invalid source name:" << sources_vec->at(i) << std::endl;
+				std::cout << "Invalid source name:" << *(sources_vec->at(i)) << std::endl;
 			}
 		}
 	}
@@ -712,10 +715,11 @@ int OpenALSoftPlayer::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint*> *so
 	//else if there are eligible sources to play
     else
     {
-		 //play sources
+		 //play sources : sources_to_play_vec already holds real source ids in a
+		 //contiguous buffer, and it is known to be non empty here
 		ALsizei n = sources_to_play_vec.size();
 		
-		const ALuint *sNames = &sources_to_play_vec.at(0);
+		const ALuint *sNames = &sources_to_play_vec[0];
 		alSourcePlayv(n, sNames);
 		
 		ALenum err = alGetError();
@@ -742,8 +746,24 @@ void OpenALSoftPlayer::PlaySource(ALuint* thisSource)
 
 void OpenALSoftPlayer::PlayMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//sources_vec holds pointers to the source ids, so dereference each one into
+	//a contiguous array of ids. Passing the vector of pointers directly is a
+	//type pun: an array of ALuint* is not an array of ALuint source ids.
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourcePlayv(n,sNames);
 	if(alGetError() != AL_NO_ERROR)
     {
@@ -758,8 +778,22 @@ void OpenALSoftPlayer::PauseSource(ALuint* thisSource)
 
 void OpenALSoftPlayer::PauseMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourcePausev (n,sNames);
 }
 
@@ -771,8 +805,22 @@ void OpenALSoftPlayer::RewindSource(ALuint* thisSource)
 
 void OpenALSoftPlayer::RewindMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourceRewindv (n, sNames);
 }
 	
@@ -784,8 +832,22 @@ void OpenALSoftPlayer::StopSource(ALuint* thisSource)
 
 void OpenALSoftPlayer::StopMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourceStopv(n,sNames);
 }
 

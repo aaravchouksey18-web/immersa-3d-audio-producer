@@ -221,6 +221,23 @@ void OpenAlSoftAudioEngine::GetAvailableHRTFNames(std::vector <std::string> *nam
 	}
 }
 
+//Human readable description of an OpenAL Soft error code.
+//alcGetString() only accepts valid ALC string parameters (ALC_DEVICE_SPECIFIER and
+//friends), never an error code, so the numeric code is mapped here instead.
+static std::string OpenALSoftErrorDescription(ALenum error_code)
+{
+	switch(error_code)
+	{
+		case AL_NO_ERROR:				{ return "no error"; }
+		case AL_INVALID_NAME:			{ return "invalid name"; }
+		case AL_INVALID_ENUM:			{ return "invalid enum"; }
+		case AL_INVALID_VALUE:			{ return "invalid value"; }
+		case AL_INVALID_OPERATION:		{ return "invalid operation"; }
+		case AL_OUT_OF_MEMORY:			{ return "out of memory"; }
+		default:						{ return "error code " + std::to_string(static_cast<int>(error_code)); }
+	}
+}
+
 std::string OpenAlSoftAudioEngine::GetCurrentHRTFSelected()
 {
 	/* Check if HRTF is enabled, and show which is being used. */
@@ -254,7 +271,10 @@ void OpenAlSoftAudioEngine::SelectThisHRTFByIndex(int& index,std::string& messag
     
     if(!alcResetDeviceSOFT(gAudioDevice, attr))
     {
-		message = "Failed to reset device: \n" + std::string( alcGetString(gAudioDevice, alcGetError(gAudioDevice)) );}
+		//query the error code first, then describe it. alcGetString() must never
+		//be given an ALC error code, it only takes ALC string parameters.
+		ALCenum alc_err = alcGetError(gAudioDevice);
+		message = "Failed to reset device: \n" + OpenALSoftErrorDescription(alc_err);}
     else{message = "Successfully changed HRTF and reset device.";}
 }
 

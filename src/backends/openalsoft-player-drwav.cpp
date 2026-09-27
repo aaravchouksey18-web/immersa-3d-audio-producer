@@ -140,21 +140,23 @@ int OpenALSoftPlayer_DRWAV::OpenPlayerFile(const char *filename)
 
 	OpenALSoftPlayer_DRWAV::ClosePlayerFile();
 
-	/* Open the file and get the first stream from it */
-	unsigned int channels;
-	unsigned int sampleRate;
-	drwav_uint64 totalPCMFrameCount;
+	/* Open the file and get the first stream from it.
+	 * Validate with a header only probe: decoding the entire file here and then
+	 * discarding the samples wasted ram and time on large or malformed files.
+	 * Every threshold and message below is unchanged, the channel and format
+	 * checks still read the real inputfile_wav opened just after this. */
+	drwav probe_wav;
+	memset(&probe_wav, 0, sizeof(probe_wav));
 
-	//open samples and convert to float 32 bit
-	float* pSampleData = drwav_open_file_and_read_pcm_frames_f32(filename, &channels, &sampleRate, &totalPCMFrameCount, NULL);
-	if (pSampleData == NULL) {
-		// Error opening and reading WAV file.
+	if (!drwav_init_file(&probe_wav, filename, NULL)) {
+		// Error opening WAV file.
 		std::cout << "Error! Unable to open file" << filename << "\n";
 		return 0;
 	}
-	
-	drwav_free(pSampleData, NULL);
-	
+
+	//no samples are decoded, so nothing needs to be freed here
+	drwav_uninit(&probe_wav);
+
 	if (!drwav_init_file_with_metadata(&inputfile_wav, filename, 0, NULL)) {
 		//error opening and initializing wav object
 		std::cout << "Error! Failed to initialize wav object from file " << filename << "\n";
@@ -430,6 +432,9 @@ int OpenALSoftPlayer_DRWAV::PlayUpdatedPlayerBuffer(ALuint* source)
 
 int OpenALSoftPlayer_DRWAV::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint*> *sources_vec)
 {	
+	//nothing to play, and the loops below would dereference an empty vector
+	if(sources_vec->empty()){return PlayerStatus::PLAYBACK_FINISHED;}
+	
 	//vector containing queued status of each source
 	std::vector <ALint> queued_source_vector;
 	queued_source_vector.resize(sources_vec->size());
@@ -468,7 +473,7 @@ int OpenALSoftPlayer_DRWAV::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint
 			}
 			else
 			{
-				std::cout << "Invalid source name:" << sources_vec->at(i) << std::endl;
+				std::cout << "Invalid source name:" << *(sources_vec->at(i)) << std::endl;
 			}
 		}
 	}
@@ -482,10 +487,11 @@ int OpenALSoftPlayer_DRWAV::PlayMultipleUpdatedPlayerBuffers(std::vector <ALuint
 	//else if there are eligible sources to play
     else
     {
-		 //play sources
+		 //play sources : sources_to_play_vec already holds real source ids in a
+		 //contiguous buffer, and it is known to be non empty here
 		ALsizei n = sources_to_play_vec.size();
 		
-		const ALuint *sNames = &sources_to_play_vec.at(0);
+		const ALuint *sNames = &sources_to_play_vec[0];
 		alSourcePlayv(n, sNames);
 		
 		ALenum err = alGetError();
@@ -512,8 +518,24 @@ void OpenALSoftPlayer_DRWAV::PlaySource(ALuint* thisSource)
 
 void OpenALSoftPlayer_DRWAV::PlayMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//sources_vec holds pointers to the source ids, so dereference each one into
+	//a contiguous array of ids. Passing the vector of pointers directly is a
+	//type pun: an array of ALuint* is not an array of ALuint source ids.
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourcePlayv(n,sNames);
 	if(alGetError() != AL_NO_ERROR)
     {
@@ -528,8 +550,22 @@ void OpenALSoftPlayer_DRWAV::PauseSource(ALuint* thisSource)
 
 void OpenALSoftPlayer_DRWAV::PauseMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourcePausev (n,sNames);
 }
 
@@ -541,8 +577,22 @@ void OpenALSoftPlayer_DRWAV::RewindSource(ALuint* thisSource)
 
 void OpenALSoftPlayer_DRWAV::RewindMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourceRewindv (n, sNames);
 }
 	
@@ -554,8 +604,22 @@ void OpenALSoftPlayer_DRWAV::StopSource(ALuint* thisSource)
 
 void OpenALSoftPlayer_DRWAV::StopMultipleSources(std::vector <ALuint*> *sources_vec)
 {
-	ALsizei n = sources_vec->size();
-	const ALuint *sNames = sources_vec->at(0);
+	//nothing to do for an empty vector, and at(0) would throw
+	if(sources_vec->empty()){return;}
+	
+	//dereference the source pointers into a contiguous array of source ids
+	std::vector <ALuint> source_ids_vec;
+	source_ids_vec.reserve(sources_vec->size());
+	
+	for(size_t i = 0; i < sources_vec->size(); i++)
+	{
+		if(sources_vec->at(i) != nullptr){ source_ids_vec.push_back(*(sources_vec->at(i))); }
+	}
+	
+	if(source_ids_vec.empty()){return;}
+	
+	ALsizei n = source_ids_vec.size();
+	const ALuint *sNames = &source_ids_vec[0];
 	alSourceStopv(n,sNames);
 }
 

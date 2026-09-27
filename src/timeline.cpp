@@ -246,8 +246,18 @@ static bool timeline_choice_changed = false;
 static ImGui::FileBrowser frames_fileDialog_creator(ImGuiFileBrowserFlags_EnterNewFilename);
 static ImGui::FileBrowser frames_fileDialog_loader(0);
 
-//counter variable for timeline
-static uint32_t second_frame_count = 0;
+//real seconds accumulated toward the next timeline frame.
+//This is a time accumulator rather than a frame counter: the old counter was
+//compared against 60/time_frame_rate, which integer-divides to 0 for any frame
+//rate above 60, so the equality never fired and the playhead froze completely
+//at those rates.
+static double timeline_frame_time_accumulator = 0.0;
+
+//bounds for the frame rate input. The low bound guarantees the playhead's
+//1/time_frame_rate divisor is never zero; the high bound keeps the value
+//meaningful for a 60 fps GUI loop.
+static const int MIN_TIME_FRAME_RATE = 1;
+static const int MAX_TIME_FRAME_RATE = 120;
 
 static bool frameRateBoxEditMode = false;
 
@@ -855,7 +865,13 @@ void Timeline::DrawFramesGUI()
 		//draw frame rate control
 		if (ImGui::InputInt("Frame Rate", &time_frame_rate) )
 		{
-			second_frame_count = 0; //reset just in case
+			//clamp the typed value right away: the playhead update divides by
+			//this, so a zero (or a negative/garbage entry) would be a division
+			//by zero, and a wild value has no meaning for a 60 fps GUI loop
+			if(time_frame_rate < MIN_TIME_FRAME_RATE){time_frame_rate = MIN_TIME_FRAME_RATE;}
+			if(time_frame_rate > MAX_TIME_FRAME_RATE){time_frame_rate = MAX_TIME_FRAME_RATE;}
+			
+			timeline_frame_time_accumulator = 0.0; //reset just in case
 		} 
 		
 		ImGui::TreePop();
@@ -978,7 +994,27 @@ void Timeline::DrawFramesFileDialog()
 	}
 	
 	frames_fileDialog_loader.Display();
+	
+	// file-browser cancel (Esc/Cancel) closes with no selection — HasSelected()
+	// never fires, so without this the flag latches true and blocks every
+	// hotkey until a real file is picked. Scoped to this dialog's own file
+	// state so the creator dialog's guard below cannot clear the flag while
+	// this dialog is still open (both share the one global flag).
+	if(global_dialog_in_use && frames_file_state == FileFrameState::LOAD_NEW &&
+	   !frames_fileDialog_loader.IsOpened())
+	{
+		global_dialog_in_use = false;
+	}
+	
 	frames_fileDialog_creator.Display();
+	
+	// same cancel-guard for the "Save As New Frames" dialog, scoped to its own
+	// file state (see the loader guard above for why the state check is needed)
+	if(global_dialog_in_use && frames_file_state == FileFrameState::SAVE_NEW &&
+	   !frames_fileDialog_creator.IsOpened())
+	{
+		global_dialog_in_use = false;
+	}
 }
 
 static PlaybackMarkerTraveler playback_marker_traveler;
@@ -1076,17 +1112,26 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 		timelineSettings.current_timeline_frame = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
 	}
 	
-	//increment timeline frame assuming constant 60 frames per second
-	//increment number of frames based on time frame rate which is number of frames per second
-	second_frame_count++;
+	//clamp defensively: SetTimeFrameRate() takes a size_t, so a bad caller
+	//value can still land here as 0 (or negative after narrowing) and the
+	//frame period below divides by it
+	if(time_frame_rate < MIN_TIME_FRAME_RATE){time_frame_rate = MIN_TIME_FRAME_RATE;}
+	if(time_frame_rate > MAX_TIME_FRAME_RATE){time_frame_rate = MAX_TIME_FRAME_RATE;}
 	
-	//if 1 second divided by time frame rate has passed
-	//example: 60 frames_per_second / 3 time_frames_per_second = 20 frames_per_time_frame_second
-	if(time_frame_rate == 0){return;}
+	//accumulate REAL elapsed time instead of counting render frames. The old
+	//code compared an integer counter against 60/time_frame_rate, an integer
+	//division that yields 0 for any frame rate above 60, so the playhead
+	//froze solid at those rates (and a rate of 0 divided by zero).
+	double frame_period_seconds = 1.0 / static_cast<double>(time_frame_rate);
+	timeline_frame_time_accumulator += static_cast<double>(ImGui::GetIO().DeltaTime);
 	
 	//for every time frame
-	if(second_frame_count == 60 / time_frame_rate)
+	//one timeline frame lasts 1/time_frame_rate seconds, so any allowed frame
+	//rate now advances the playhead. Subtract the period (instead of zeroing)
+	//so the leftover time carries into the next tick and the rate stays exact.
+	if(timeline_frame_time_accumulator >= frame_period_seconds)
 	{
+		timeline_frame_time_accumulator -= frame_period_seconds;
 		
 		timelineSettings.current_timeline_frame++;
 		//hold at the last valid frame instead of running past the arrays
@@ -1094,7 +1139,6 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 		{
 			timelineSettings.current_timeline_frame = MAX_NUMBER_OF_POINTS_IN_TIMELINE_PLOT - 1;
 		}
-		second_frame_count = 0;
 		
 		
 		//for every position plot
@@ -1163,7 +1207,7 @@ void Timeline::RunPlaybackWithTimeline(ImmediateModeSoundPlayer* im_sound_player
 void Timeline::ResumeEditModeInTimeline()
 {
 	timelineSettings.editMode = true;
-	second_frame_count = 0;
+	timeline_frame_time_accumulator = 0.0;
 }
 
 void Timeline::ValidateTimelineListviewIndex()

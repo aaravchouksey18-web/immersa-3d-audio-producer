@@ -114,12 +114,16 @@ void ImmediateModeSoundPlayer::PlayAll_SimplePlayback()
 	typedef std::chrono::duration<float, std::milli> duration;
 	
 	
-	//launch worker thread to apply certain effect if listener is in a certain effect zone
-    std::thread effect_worker_thread(DetermineEffect);
-      
+	//apply certain effect if listener is in a certain effect zone.
+	//done synchronously: a per frame detached / not yet joined worker thread could
+	//still be running when the player is torn down and race on the shared effect
+	//and zone vectors. DetermineEffect does no blocking I/O, it is a single guarded
+	//call into the effects manager, so calling it inline is cheap.
+	DetermineEffect();
+
 	if(m_state == IMSoundPlayerState::NONE)
 	{
-		
+	
 		if(m_sound_producer_reg_ptr && m_sound_bank_ptr)
 		{
 			//initialize audio players for each sound producer
@@ -146,18 +150,12 @@ void ImmediateModeSoundPlayer::PlayAll_SimplePlayback()
 			
 		}
 		
-		//wait for worker thread to finish effect operation
-		effect_worker_thread.join();
-		
 		//start play the sources
 		mainAudioPlayer.PlayMultipleSources(&m_sound_producer_reg_ptr->sound_producer_sources_vec);
-  	
+   	
 	}
 	else if(m_state == IMSoundPlayerState::PAUSED)
 	{
-		//wait for worker thread to finish effect operation
-		effect_worker_thread.join();
-		
 		for(size_t it = 0; it < buffering_audio_players_vec.size(); it++)
 		{
 			std::uint8_t account_num = m_sound_producer_reg_ptr->sound_producer_vector_ref->at(it)->GetAccountNumber();
@@ -187,9 +185,6 @@ void ImmediateModeSoundPlayer::PlayAll_SimplePlayback()
 			ImmediateModeSoundPlayer::LoadBufferStreaming(sourceToManipulatePtr,buffering_audio_players_vec[it]);
 		}
 
-		//wait for worker thread to finish effect operation
-		effect_worker_thread.join();
-		
 		//play all sources in sync
 		if(m_state == IMSoundPlayerState::PLAYING)
 		{
@@ -297,8 +292,12 @@ void ImmediateModeSoundPlayer::RunStateForPlayer_ComplexPlayback()
 	
 	clock::time_point start_time = clock::now();
 	
-	//launch worker thread to apply certain effect if listener is in a certain effect zone
-    std::thread effect_worker_thread(DetermineEffect);
+	//apply certain effect if listener is in a certain effect zone.
+	//done synchronously: this function runs every frame, and a per frame worker
+	//thread that outlives the frame could still be touching the shared effect and
+	//zone vectors while the player is being torn down. DetermineEffect performs no
+	//blocking I/O, it is one guarded call into the effects manager.
+	DetermineEffect();
     
 	//for all buffer player, depending on state
 	for(int it = 0; it < buffer_players_states.size(); it++)
@@ -363,9 +362,6 @@ void ImmediateModeSoundPlayer::RunStateForPlayer_ComplexPlayback()
 			
 		}
 	}
-	
-	//wait for worker thread to finish effect operation
-	effect_worker_thread.join();
 	
 	//play all sources in sync
 	
@@ -556,8 +552,6 @@ void ImmediateModeSoundPlayer::Play_IndividualBufferPlayer_ComplexPlayback(int i
 		}
 	}
 	
-	al_nssleep(10000000);
-
 }
 
 void ImmediateModeSoundPlayer::TransitionNoneToPlay_IndividualBufferPlayer_ComplexPlayback(int index)
@@ -578,7 +572,6 @@ void ImmediateModeSoundPlayer::TransitionNoneToPlay_IndividualBufferPlayer_Compl
 			double& current_time = buffer_players_states[index].current_time;
 			
 			buffering_audio_players_vec[index].StartPlayerBuffering(sourceToManipulatePtr,current_time); 
-			al_nssleep(10000000);
 		}
 		
 	}
@@ -601,8 +594,6 @@ void ImmediateModeSoundPlayer::TransitionPausedToPlay_IndividualBufferPlayer_Com
 		buffering_audio_players_vec[index].StartPlayerBuffering(sourceToManipulatePtr,current_time);
 		
 	}
-	
-	al_nssleep(10000000);
 }
 
 void ImmediateModeSoundPlayer::TransitionPlayToNone_IndividualBufferPlayer_ComplexPlayback(int index)
@@ -619,7 +610,6 @@ void ImmediateModeSoundPlayer::TransitionPlayToNone_IndividualBufferPlayer_Compl
 	}
 	
 	m_effects_manager_ptr->RemoveEffectFromSoundProducer(index);
-	al_nssleep(10000000);
 }
 
 void ImmediateModeSoundPlayer::TransitionPlayToPaused_IndividualBufferPlayer_ComplexPlayback(int index)
@@ -635,7 +625,6 @@ void ImmediateModeSoundPlayer::TransitionPlayToPaused_IndividualBufferPlayer_Com
 	}
 	
 	m_effects_manager_ptr->RemoveEffectFromSoundProducer(index);
-	al_nssleep(10000000);
 }
 
 void ImmediateModeSoundPlayer::SetBufferPlayerToPlay_ComplexPlayback(int index)
@@ -716,7 +705,6 @@ void ImmediateModeSoundPlayer::LoadBufferStreaming(ALuint* sourceToManipulatePtr
 				audioPlayer.ClearQueue(sourceToManipulatePtr);
 				audioPlayer.StartPlayerBuffering(sourceToManipulatePtr,m_current_time);
 				
-				al_nssleep(10000000);
 				break;
 			}
 			//if already in state of playing
@@ -748,7 +736,6 @@ void ImmediateModeSoundPlayer::LoadBufferStreaming(ALuint* sourceToManipulatePtr
 					}
 				}
 				
-				al_nssleep(10000000);
 				break;
 			}
 			//if rewinding
@@ -756,7 +743,6 @@ void ImmediateModeSoundPlayer::LoadBufferStreaming(ALuint* sourceToManipulatePtr
 			{
 				audioPlayer.StartPlayerBuffering(sourceToManipulatePtr,m_current_time);
 				
-				al_nssleep(10000000);
 				break;
 			}
 			//if fast forwarding
@@ -764,7 +750,6 @@ void ImmediateModeSoundPlayer::LoadBufferStreaming(ALuint* sourceToManipulatePtr
 			{
 				audioPlayer.StartPlayerBuffering(sourceToManipulatePtr,m_current_time);
 				
-				al_nssleep(10000000);
 				break;
 			}
 			

@@ -15,6 +15,7 @@
 
 #include <unistd.h>
 #include <cstring>
+#include <cstdlib> //malloc/free for the header-validated decode buffers
 #include <iostream>
 
 #include "dialog_var.h"
@@ -87,8 +88,6 @@ void SoundBank::DrawGui_Item()
 	if (ImGui::TreeNode("Sound Bank"))
 	{
 		
-		soundbank_menu_in_use = ImGui::IsWindowHovered();
-		
 		ImGui::Text("Name \t Account Number \t File");
 		
 		//for each account from start to last account number
@@ -139,8 +138,22 @@ void SoundBank::DrawGui_Item()
 		
 		sound_fileDialog_loader.Display();
 		
+		// file-browser cancel (Esc/Cancel) closes with no selection — HasSelected()
+		// never fires, so without this the flag latches true and blocks every
+		// hotkey until a real file is picked
+		if(global_dialog_in_use && !sound_fileDialog_loader.IsOpened())
+		{
+			global_dialog_in_use = false;
+		}
+		
 		ImGui::TreePop();
 	}
+	
+	//this flag gates the global hotkey handling in main_gui_editor.cpp, so it
+	//must be refreshed every frame. While the assignment sat inside the
+	//TreeNode body a collapsed node stopped executing it, so the flag latched
+	//true and blocked every keyboard shortcut until the node was reopened.
+	soundbank_menu_in_use = ImGui::IsWindowHovered();
 		
 
 	
@@ -166,17 +179,22 @@ bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inpu
 	//(32-bit float PCM, in this case)
 
 	//read data
-	
-    unsigned int channels;
-    unsigned int sampleRate;
-    drwav_uint64 totalPCMFrameCount;
-    
-    float* pSampleData = drwav_open_file_and_read_pcm_frames_f32(inputSoundFilePath.c_str(), &channels, &sampleRate, &totalPCMFrameCount, NULL);
-    if (pSampleData == NULL) {
-        // Error opening and reading WAV file.
+
+    //validate the header FIRST (drwav_init_file only parses the header) and
+    //decode afterwards. drwav_open_file_and_read_pcm_frames_f32 decoded the
+    //whole file into RAM before any guard ran, so a crafted header claiming a
+    //huge frame count caused the OOM allocation before it could be rejected.
+    drwav wav;
+    if(!drwav_init_file(&wav, inputSoundFilePath.c_str(), NULL))
+    {
+        // Error opening WAV file.
         std::cout << "Error! Could not open input file " << inputSoundFilePath << " in sound bank.\n"; 
         return false;
     }
+
+    unsigned int channels = wav.channels;
+    unsigned int sampleRate = wav.sampleRate;
+    drwav_uint64 totalPCMFrameCount = wav.totalPCMFrameCount;
     
     //guard against malformed/crafted headers: reject unsupported channel counts,
     //implausible sample rates, and frame counts too large to copy into RAM
@@ -186,24 +204,37 @@ bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inpu
     {
         std::cout << "Rejected audio file (unsupported format): ch=" << channels
                   << " rate=" << sampleRate << " frames=" << totalPCMFrameCount << "\n";
-        drwav_free(pSampleData, NULL);
+        drwav_uninit(&wav);
         return false;
     }
 
+    //only now that the header is known to be sane is it safe to allocate
+    float* pSampleData = (float*)malloc((size_t)totalPCMFrameCount * sizeof(float) * channels);
+    if (pSampleData == NULL) {
+        std::cout << "Error! Could not allocate " << totalPCMFrameCount
+                  << " frames for input file " << inputSoundFilePath << " in sound bank.\n";
+        drwav_uninit(&wav);
+        return false;
+    }
+
+    //the file may be truncated, so trust the amount actually decoded
+    drwav_uint64 framesRead = drwav_read_pcm_frames_f32(&wav, totalPCMFrameCount, pSampleData);
+    drwav_uninit(&wav);
+    
     audio_data_ptr->channels = channels;
     audio_data_ptr->sampleRate = sampleRate;
-    audio_data_ptr->total_frames = totalPCMFrameCount;
+    audio_data_ptr->total_frames = framesRead;
     
     //copy audio samples to vector
     //keep the decoded interleaved samples (frames x channels) so the
     //stream-file writer can emit correct multi-channel WAV data
     audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames * audio_data_ptr->channels);
-    for(drwav_uint64 i = 0; i < totalPCMFrameCount * channels; i++)
+    for(drwav_uint64 i = 0; i < framesRead * channels; i++)
     {
 		audio_data_ptr->audio_samples[i] = pSampleData[i];
 	}
 
-    drwav_free(pSampleData, NULL);
+    free(pSampleData);
 	
 	return true;
 }
@@ -211,16 +242,19 @@ bool ReadAndCopyDataFromInputFile_WAV(AudioData* audio_data_ptr,std::string inpu
 bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inputSoundFilePath)
 {
 	
-	unsigned int channels;
-    unsigned int sampleRate;
-    drflac_uint64 totalPCMFrameCount;
-    
-    //decode audio data
-    float* pSampleData = drflac_open_file_and_read_pcm_frames_f32(inputSoundFilePath.c_str(), &channels, &sampleRate, &totalPCMFrameCount, NULL);
-    if (pSampleData == NULL) {
-        // Failed to open and decode FLAC file.
+	//validate the header FIRST (drflac_open_file only parses the header) and
+	//decode afterwards. drflac_open_file_and_read_pcm_frames_f32 decoded the
+	//whole file into RAM before any guard ran, so a crafted header claiming a
+	//huge frame count caused the OOM allocation before it could be rejected.
+    drflac* pFlac = drflac_open_file(inputSoundFilePath.c_str(), NULL);
+    if (pFlac == NULL) {
+        // Failed to open FLAC file.
         return false;
     }
+
+    unsigned int channels = pFlac->channels;
+    unsigned int sampleRate = pFlac->sampleRate;
+    drflac_uint64 totalPCMFrameCount = pFlac->totalPCMFrameCount;
 
     //guard against malformed/crafted headers (same policy as the WAV reader)
     if(channels == 0 || channels > MAX_CHANNELS ||
@@ -229,25 +263,38 @@ bool ReadAndCopyDataFromInputFile_FLAC(AudioData* audio_data_ptr,std::string inp
     {
         std::cout << "Rejected audio file (unsupported format): ch=" << channels
                   << " rate=" << sampleRate << " frames=" << totalPCMFrameCount << "\n";
-        drflac_free(pSampleData, NULL);
+        drflac_close(pFlac);
         return false;
     }
 
+    //only now that the header is known to be sane is it safe to allocate
+    float* pSampleData = (float*)malloc((size_t)totalPCMFrameCount * sizeof(float) * channels);
+    if (pSampleData == NULL) {
+        std::cout << "Error! Could not allocate " << totalPCMFrameCount
+                  << " frames for input file " << inputSoundFilePath << " in sound bank.\n";
+        drflac_close(pFlac);
+        return false;
+    }
+
+    //the file may be truncated, so trust the amount actually decoded
+    drflac_uint64 framesRead = drflac_read_pcm_frames_f32(pFlac, totalPCMFrameCount, pSampleData);
+    drflac_close(pFlac);
+
     audio_data_ptr->channels = channels;
     audio_data_ptr->sampleRate = sampleRate;
-    audio_data_ptr->total_frames = totalPCMFrameCount;
+    audio_data_ptr->total_frames = framesRead;
     
     
 
     //copy audio samples to vector
     //keep the decoded interleaved samples (frames x channels)
     audio_data_ptr->audio_samples.resize(audio_data_ptr->total_frames * audio_data_ptr->channels);
-    for(drflac_uint64 i = 0; i < totalPCMFrameCount * channels; i++)
+    for(drflac_uint64 i = 0; i < framesRead * channels; i++)
     {
 		audio_data_ptr->audio_samples[i] = pSampleData[i];
 	}
 
-    drflac_free(pSampleData, NULL);
+    free(pSampleData);
     
     return true;
 }

@@ -154,10 +154,13 @@ void EffectsManager::ApplyEffectZoneBasedOnListenerPosition(EffectZone* thisZone
 						if(EffectsManager::IsThisSoundProducerInsideEffectZone(thisSoundProducer,thisZone))
 						{
 							
-							//apply reverb to source of sound producer track
-							EffectsManager::ApplyThisEffectZoneEffectToThisSource(source_ptr,thisZone);
-							
-							thisSoundProducer->SetEffectAppliedBool(true);
+							//apply reverb to source of sound producer track.
+							//only flag the producer when a zone effect slot was really
+							//bound, otherwise the zone check would skip it forever
+							if(EffectsManager::ApplyThisEffectZoneEffectToThisSource(source_ptr,thisZone))
+							{
+								thisSoundProducer->SetEffectAppliedBool(true);
+							}
 						}
 					}
 				}
@@ -256,10 +259,17 @@ bool EffectsManager::IsThisSoundProducerInsideEffectZone(SoundProducer* thisSoun
 	return false;
 }
 
-void EffectsManager::ApplyThisEffectZoneEffectToThisSource(ALuint* source, EffectZone* thisZone)
+bool EffectsManager::ApplyThisEffectZoneEffectToThisSource(ALuint* source, EffectZone* thisZone)
 {
 	// Connect the source to the effect slot. This tells the source to use the
 	// effect slot 'slot', on send #0 with the AL_FILTER_NULL filter object.
+	
+	//a source, or a zone whose effect slot was never generated, cannot be given
+	//an effect slot, so report failure instead of pretending it was applied
+	if(source == nullptr || thisZone == nullptr){return false;}
+	
+	ALuint* slot_ptr = thisZone->GetEffectsSlotPointer();
+	if(slot_ptr == nullptr || *slot_ptr == 0){return false;}
 	
 	ALenum err;
 	
@@ -267,12 +277,14 @@ void EffectsManager::ApplyThisEffectZoneEffectToThisSource(ALuint* source, Effec
 	
 	if(err != AL_NO_ERROR) std::cout << "AL Error found before effect check on source:" <<  alGetString(err) << std::endl;
 	
-	alSource3i(*source, AL_AUXILIARY_SEND_FILTER, (ALint)(*thisZone->GetEffectsSlotPointer()), 0, AL_FILTER_NULL);
+	alSource3i(*source, AL_AUXILIARY_SEND_FILTER, (ALint)(*slot_ptr), 0, AL_FILTER_NULL);
 
 	err = alGetError();
 	
 	if(err != AL_NO_ERROR) std::cout << "AL Error found after effect check on source:" <<  alGetString(err) << std::endl;
 	
+	//only success when a real slot was bound and openal reported no error
+	return (err == AL_NO_ERROR);
 }
 
 void EffectsManager::RemoveEffectFromThisSource(ALuint* source)
@@ -329,6 +341,40 @@ void EffectsManager::FreeEffects()
 	for(size_t i=0; i < echo_zones_vector.size(); i++)
 	{
 		echo_zones_vector[i].FreeEffects();
+	}
+}
+
+void EffectsManager::ClearAllZones()
+{
+	//free the openal effect and effect slot of every zone before discarding it,
+	//otherwise the generated objects leak for the lifetime of the audio context
+	for(size_t i=0; i < standard_reverb_zones_vector.size(); i++)
+	{
+		standard_reverb_zones_vector[i].FreeEffects();
+	}
+	
+	for(size_t i=0; i < eax_reverb_zones_vector.size(); i++)
+	{
+		eax_reverb_zones_vector[i].FreeEffects();
+	}
+	
+	for(size_t i=0; i < echo_zones_vector.size(); i++)
+	{
+		echo_zones_vector[i].FreeEffects();
+	}
+	
+	//remove the ghost zones so they are not saved or carried into a new session
+	standard_reverb_zones_vector.clear();
+	eax_reverb_zones_vector.clear();
+	echo_zones_vector.clear();
+	
+	//no zone exists anymore, so no sound producer can have a zone effect applied
+	if(m_sound_producer_reg_ptr && m_sound_producer_reg_ptr->sound_producer_vector_ref)
+	{
+		for(size_t i = 0; i < m_sound_producer_reg_ptr->sound_producer_vector_ref->size(); i++)
+		{
+			m_sound_producer_reg_ptr->sound_producer_vector_ref->at(i)->SetEffectAppliedBool(false);
+		}
 	}
 }
 
